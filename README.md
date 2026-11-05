@@ -46,7 +46,7 @@ No extra hardware: it uses the motion sensors built into the AirPods sitting in 
 ## 🚀 Getting started
 
 ```bash
-git clone https://github.com/<your-username>/AirPodsMouse.git
+git clone https://github.com/Harlo9/AirPodsMouse.git
 cd AirPodsMouse
 ./build.sh
 open AirPodsMouse.app
