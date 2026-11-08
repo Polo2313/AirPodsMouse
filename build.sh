@@ -17,7 +17,7 @@ cat > $APP/Contents/Info.plist <<'EOF'
   <key>CFBundleShortVersionString</key><string>1.0</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSUIElement</key><true/>
-  <key>NSMotionUsageDescription</key><string>Utilise les mouvements de tête des AirPods pour déplacer le curseur.</string>
+  <key>NSMotionUsageDescription</key><string>Utilise les capteurs de mouvement des AirPods pour déplacer le curseur.</string>
 </dict></plist>
 EOF
 codesign --force --sign - $APP
