@@ -212,8 +212,11 @@ AirPodsMouse/
 |---|---|
 | `open AirPodsMouse.app` | Normal launch (menu bar) |
 | `open AirPodsMouse.app --args --3d` | Launch with the 3D viewer open |
-| `./AirPodsMouse.app/Contents/MacOS/AirPodsMouse` | Run in the terminal and see live status logs |
+| `open -W --stdout "$(tty)" --stderr "$(tty)" AirPodsMouse.app` | Run attached to the terminal and see live status logs |
 | `./AirPodsMouse.app/Contents/MacOS/AirPodsMouse --snapshot out.png` | Render the 3D scene to a PNG and exit |
+
+> [!CAUTION]
+> Don't run the binary directly (`./AirPodsMouse.app/Contents/MacOS/AirPodsMouse`) for normal use: macOS then treats your terminal as the app asking for motion access and kills it on launch. Always go through `open`. (`--snapshot` is fine, since it doesn't touch the sensors.)
 
 ---
 
