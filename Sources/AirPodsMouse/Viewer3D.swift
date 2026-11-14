@@ -3,6 +3,8 @@ import AppKit
 import SceneKit
 import simd
 import Metal
+import CoreMotion
+import AirPodsMouseCore
 
 final class Viewer3D: NSObject {
     let window: NSWindow
@@ -22,7 +24,7 @@ final class Viewer3D: NSObject {
                           styleMask: [.titled, .closable, .resizable, .miniaturizable],
                           backing: .buffered, defer: false)
         super.init()
-        window.title = "AirPodsMouse — Vue 3D"
+        window.title = String(localized: "AirPodsMouse — Vue 3D")
         window.isReleasedWhenClosed = false
         window.center()
 
@@ -36,7 +38,7 @@ final class Viewer3D: NSObject {
         scnView.allowsCameraControl = true     // glisser = tourner la caméra, molette = zoom
         content.addSubview(scnView)
 
-        let legend = NSTextField(labelWithString: "🔴 droite   🟢 haut   🔵 direction pointée   (axes fins = repère fixe)")
+        let legend = NSTextField(labelWithString: String(localized: "🔴 droite   🟢 haut   🔵 direction pointée   (axes fins = repère fixe)"))
         legend.textColor = .white
         legend.frame = NSRect(x: 12, y: content.bounds.height - 30, width: 600, height: 20)
         legend.autoresizingMask = [.minYMargin]
@@ -48,7 +50,7 @@ final class Viewer3D: NSObject {
         info.autoresizingMask = [.maxYMargin]
         content.addSubview(info)
 
-        let button = NSButton(title: "Recentrer", target: self, action: #selector(recenter))
+        let button = NSButton(title: String(localized: "Recentrer"), target: self, action: #selector(recenter))
         button.bezelStyle = .rounded
         button.frame = NSRect(x: content.bounds.width - 120, y: 8, width: 110, height: 30)
         button.autoresizingMask = [.minXMargin, .maxYMargin]
@@ -158,7 +160,7 @@ final class Viewer3D: NSObject {
 
         if Date().timeIntervalSince(lastInfo) > 0.1 {
             lastInfo = Date()
-            info.stringValue = String(format: "gauche/droite %+5.2f rad/s    haut/bas %+5.2f rad/s", yawRate, pitchRate)
+            info.stringValue = String(format: String(localized: "gauche/droite %+5.2f rad/s    haut/bas %+5.2f rad/s"), yawRate, pitchRate)
         }
     }
 
@@ -182,5 +184,17 @@ final class Viewer3D: NSObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
             self?.caseMaterial.diffuse.contents = NSColor(calibratedWhite: 0.95, alpha: 1)
         }
+    }
+}
+
+extension Viewer3D {
+    /// Met à jour la vue depuis une mesure brute des capteurs.
+    func update(motion m: CMDeviceMotion, engine: PointerEngine) {
+        let w = V3(m.rotationRate.x, m.rotationRate.y, m.rotationRate.z)
+        let g = simd_normalize(V3(m.gravity.x, m.gravity.y, m.gravity.z))
+        guard let ax = engine.axes(g: g) else { return }
+        let r = engine.rates(w: w, g: g)
+        let q = m.attitude.quaternion
+        update(q: simd_quatd(ix: q.x, iy: q.y, iz: q.z, r: q.w), g: g, forward: ax.forward, yawRate: r.yaw, pitchRate: r.pitch)
     }
 }

@@ -1,0 +1,137 @@
+/* AirPodsMouse — English. Keys are the French source text. Check: scripts/check-strings.sh */
+
+/* État */
+"Recherche des AirPods…" = "Looking for AirPods…";
+"Actif" = "Active";
+"Aucun mouvement reçu" = "No motion received";
+"En pause" = "Paused";
+"Calibrage… lève la tête puis reviens" = "Calibrating… tilt your head up, then back";
+"Accès aux mouvements refusé" = "Motion access denied";
+"Capteurs indisponibles sur ce Mac" = "Motion sensors unavailable on this Mac";
+
+/* Menu */
+"⚠️ Autoriser l'Accessibilité…" = "⚠️ Allow Accessibility…";
+"Pause" = "Pause";
+"Reprendre" = "Resume";
+"Clic automatique" = "Dwell click";
+"Clic par hochement de tête" = "Nod to click";
+"Réglages…" = "Settings…";
+"Quitter AirPodsMouse" = "Quit AirPodsMouse";
+"Réglages d'AirPodsMouse" = "AirPodsMouse Settings";
+
+/* Volets */
+"Général" = "General";
+"Pointeur" = "Pointer";
+"Clic" = "Click";
+"Essai" = "Practice";
+"À propos" = "About";
+
+/* Général */
+"Bouge la tête pour déplacer le curseur." = "Move your head to move the pointer.";
+"Vérifications" = "Checks";
+"AirPods connectés" = "AirPods connected";
+"AirPods Pro, AirPods 3, 4 ou AirPods Max, dans tes oreilles." = "AirPods Pro, AirPods 3, 4 or AirPods Max, in your ears.";
+"Son du Mac dans les AirPods" = "Mac sound plays in the AirPods";
+"Aide les AirPods à envoyer leurs mouvements." = "Helps the AirPods send their motion.";
+"Mettre le son sur les AirPods" = "Play sound through AirPods";
+"Accès aux mouvements" = "Motion access";
+"Pour lire les capteurs des AirPods." = "To read the AirPods' motion sensors.";
+"Accessibilité" = "Accessibility";
+"Pour déplacer le curseur et cliquer." = "To move the pointer and click.";
+"Ouvrir le réglage" = "Open Settings";
+"Démarrage" = "Startup";
+"Ouvrir AirPodsMouse au démarrage du Mac" = "Open AirPodsMouse when the Mac starts";
+"Raccourcis clavier" = "Keyboard shortcuts";
+"Pause / reprendre" = "Pause / resume";
+"Calibrer" = "Calibrate";
+"Ouvrir les réglages" = "Open Settings";
+"Quitter" = "Quit";
+
+/* Pointeur */
+"Vitesse" = "Speed";
+"Lente" = "Slow";
+"Rapide" = "Fast";
+"Vitesse verticale" = "Vertical speed";
+"Moins" = "Less";
+"Plus" = "More";
+"On bouge moins la tête de haut en bas que de gauche à droite : la vitesse verticale compense." = "People move their head less up and down than side to side: vertical speed makes up for it.";
+"Sens" = "Direction";
+"Inverser gauche / droite" = "Invert left / right";
+"Inverser haut / bas" = "Invert up / down";
+"Calibrage du haut / bas" = "Up / down calibration";
+"Personnalisé" = "Custom";
+"Réglage par défaut (convient aux AirPods portés)" = "Default (right for AirPods worn in your ears)";
+"Calibrer…" = "Calibrate…";
+"Facultatif. Utile seulement si le curseur part en diagonale quand tu lèves la tête. Clique « Calibrer », puis lève la tête et reviens, 2 ou 3 fois en 3 secondes." = "Optional. Only useful if the pointer drifts diagonally when you tilt your head up. Click “Calibrate”, then tilt your head up and back 2 or 3 times within 3 seconds.";
+"Réinitialiser tous les réglages" = "Reset all settings";
+"Les AirPods n'envoient aucun mouvement : mets-les dans tes oreilles." = "The AirPods aren't sending any motion: put them in your ears.";
+"Aucun mouvement reçu pendant le calibrage." = "No motion received during calibration.";
+"Pas assez de mouvement : lève la tête plus franchement." = "Not enough movement: tilt your head up more clearly.";
+"Calibré ✅" = "Calibrated ✅";
+
+/* Clic */
+"Hochement de tête" = "Head nod";
+"Un petit « oui » rapide : baisse la tête d'un coup et reviens." = "A quick little “yes”: dip your head and come back.";
+"Sensibilité" = "Sensitivity";
+"Prudent" = "Careful";
+"Normal" = "Normal";
+"Facile" = "Easy";
+"« Prudent » évite les clics involontaires ; « Facile » accepte des hochements plus lents. Deux hochements de suite font un double-clic." = "“Careful” avoids accidental clicks; “Easy” accepts slower nods. Two nods in a row make a double-click.";
+"Garde le curseur immobile sur une cible : un anneau se remplit, puis ça clique." = "Hold the pointer still on a target: a ring fills up, then it clicks.";
+"Délai avant le clic" = "Delay before clicking";
+"Court" = "Short";
+"Long" = "Long";
+"Idéal si les gestes rapides sont difficiles. Pour cliquer à nouveau au même endroit, éloigne un peu le curseur puis reviens." = "Ideal if quick gestures are hard. To click the same spot again, move the pointer away a little and come back.";
+"Clic droit" = "Right click";
+"Penche vite la tête vers une épaule et reviens." = "Quickly tilt your head toward a shoulder and back.";
+
+/* À propos */
+"Version %@" = "Version %@";
+"Pilote ton Mac avec ta tête, grâce à tes AirPods." = "Control your Mac with your head, using your AirPods.";
+"Revoir l'accueil" = "Show welcome again";
+"Vue 3D des capteurs" = "3D sensor view";
+"Ouvrir le journal" = "Open log";
+
+/* Accueil */
+"Commencer" = "Get started";
+"Continuer" = "Continue";
+"Retour" = "Back";
+"Terminer" = "Done";
+"Pilote ton Mac avec ta tête" = "Control your Mac with your head";
+"Tes AirPods deviennent une souris : tourne la tête pour déplacer le curseur, fais un petit « oui » pour cliquer." = "Your AirPods become a mouse: turn your head to move the pointer, give a little “yes” nod to click.";
+"Il faut des AirPods Pro, AirPods 3, AirPods 4 ou AirPods Max." = "Requires AirPods Pro, AirPods 3, AirPods 4 or AirPods Max.";
+"AirPodsMouse lit les capteurs de mouvement de tes AirPods. Rien ne quitte ton Mac." = "AirPodsMouse reads your AirPods' motion sensors. Nothing leaves your Mac.";
+"Accès autorisé" = "Access allowed";
+"L'accès a été refusé. Active « AirPodsMouse » dans Réglages › Confidentialité et sécurité › Mouvements et forme." = "Access was denied. Turn on “AirPodsMouse” in Settings › Privacy & Security › Motion & Fitness.";
+"Autoriser l'accès" = "Allow access";
+"Le Mac va afficher une demande : clique « Autoriser »." = "Your Mac will ask you: click “Allow”.";
+"Mets tes AirPods" = "Put on your AirPods";
+"Dans tes deux oreilles, puis bouge un peu la tête." = "In both ears, then move your head a little.";
+"Tes AirPods bougent !" = "Your AirPods are moving!";
+"Tes AirPods sont peut-être connectés à ton iPhone : choisis-les dans le menu Son, en haut à droite de l'écran." = "Your AirPods may be connected to your iPhone: choose them in the Sound menu at the top right of the screen.";
+"Mets les AirPods dans tes oreilles. S'ils y sont déjà, ils sont peut-être passés sur ton iPhone." = "Put the AirPods in your ears. If they already are, they may have switched to your iPhone.";
+"Toujours rien ? Vérifie que ce sont bien des AirPods Pro, 3, 4 ou Max, connectés à ce Mac." = "Still nothing? Make sure they're AirPods Pro, 3, 4 or Max, connected to this Mac.";
+"Autorise le contrôle du curseur" = "Allow pointer control";
+"macOS demande ton accord pour qu'une appli déplace le curseur et clique." = "macOS needs your permission for an app to move the pointer and click.";
+"C'est autorisé" = "Allowed";
+"Active l'interrupteur à côté d'AirPodsMouse, puis reviens ici : la suite s'affiche toute seule." = "Turn on the switch next to AirPodsMouse, then come back here: the next step appears on its own.";
+"Comment veux-tu cliquer ?" = "How do you want to click?";
+"Tu pourras changer plus tard dans les réglages." = "You can change this later in Settings.";
+"Garde le curseur immobile une seconde sur la cible. Idéal si les gestes rapides sont difficiles." = "Hold the pointer still on the target for a second. Ideal if quick gestures are hard.";
+"À toi de jouer !" = "Your turn!";
+"Vise chaque cible avec la tête et clique dessus." = "Aim at each target with your head and click it.";
+
+/* Essai */
+"Vise chaque cible avec la tête, puis clique (hochement ou clic automatique)." = "Aim at each target with your head, then click (nod or dwell click).";
+"Bravo, tu sais cliquer avec ta tête !" = "Well done, you can click with your head!";
+"Recommencer" = "Start over";
+
+/* Vue 3D */
+"AirPodsMouse — Vue 3D" = "AirPodsMouse — 3D view";
+"🔴 droite   🟢 haut   🔵 direction pointée   (axes fins = repère fixe)" = "🔴 right   🟢 up   🔵 pointing direction   (thin axes = fixed frame)";
+"Recentrer" = "Recenter";
+"gauche/droite %+5.2f rad/s    haut/bas %+5.2f rad/s" = "left/right %+5.2f rad/s    up/down %+5.2f rad/s";
+
+/* Réveil des AirPods */
+"Ramener les AirPods sur ce Mac" = "Bring AirPods back to this Mac";
+"AirPodsMouse est prêt." = "AirPodsMouse is ready.";

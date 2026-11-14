@@ -1,0 +1,28 @@
+AirPodsMouse — si macOS bloque la première ouverture
+====================================================
+
+AirPodsMouse est gratuite et n'est pas (encore) vérifiée par Apple.
+La première fois, macOS peut afficher :
+« Impossible d'ouvrir AirPodsMouse car Apple ne peut pas vérifier... »
+
+C'est normal. Pour l'ouvrir quand même (une seule fois) :
+
+  1. Clique sur « OK » (ou « Terminé ») dans ce message.
+  2. Ouvre  > Réglages Système > Confidentialité et sécurité.
+  3. Descends jusqu'à la ligne « AirPodsMouse a été bloquée... ».
+  4. Clique sur « Ouvrir quand même », puis confirme (mot de passe ou Touch ID).
+
+Ensuite AirPodsMouse s'ouvre normalement, et l'accueil te guide pour la suite.
+
+
+If macOS blocks the first launch (English)
+------------------------------------------
+
+AirPodsMouse is free and not (yet) notarized by Apple. The first time:
+
+  1. Click "OK" / "Done" in the warning.
+  2. Open  > System Settings > Privacy & Security.
+  3. Scroll to "AirPodsMouse was blocked...".
+  4. Click "Open Anyway" and confirm.
+
+AirPodsMouse then opens normally and its welcome screens guide you.

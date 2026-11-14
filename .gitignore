@@ -1,2 +1,5 @@
 AirPodsMouse.app/
 .DS_Store
+.superpowers/
+dist/
+.build/
