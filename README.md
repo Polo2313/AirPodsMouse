@@ -27,6 +27,15 @@ Aucun matériel en plus : l'appli lit les capteurs de mouvement de tes AirPods.
 | 🙂 **Cliquer par hochement** | Un petit « oui » rapide = un clic. Deux de suite = double-clic. Un vrai regard vers le haut ou le bas ne clique pas. |
 | ⏱️ **Clic automatique** | Pour qui ne peut pas faire de geste rapide : garde le curseur immobile une seconde sur une cible, un anneau se remplit, puis ça clique. |
 | ↘️ **Clic droit** *(option)* | Penche vite la tête vers une épaule et reviens. |
+| 🧭 **Toujours aligné** | En face de l'écran, le curseur revient au centre, même après avoir regardé au-delà d'un bord. L'appli se recale toute seule. |
+| ↕️ **Défiler avec la tige** *(option)* | Glisse le doigt vers le haut ou le bas sur la tige des AirPods Pro 2. |
+| 📜 **Défiler avec la tête** | ⌃⌥S, puis penche la tête vers le haut ou le bas ; un hochement pour arrêter. |
+| ✊ **Glisser-déposer** | ⌃⌥D pour attraper (sélectionner du texte, déplacer une fenêtre ou un fichier), un hochement pour lâcher. |
+| 🎯 **Menu de clic rapide** *(option)* | Avec le clic automatique : un menu circulaire (clic, double-clic, clic droit, glisser, défiler) ; vise l'action et reste immobile. |
+| 🧲 **Aimant** | Le curseur ralentit au-dessus des boutons et des liens : plus facile de viser. |
+| ⌨️ **Pause pendant la frappe** | Quand tu tapes (et regardes le clavier), le curseur reste en place. |
+| 🙅 **« Non » = Échap** *(option)* | Secouer la tête ferme un menu ou annule. |
+| 🗣️ **Écrire sans les mains** | Accès direct à la dictée et au réglage du clavier visuel de macOS. |
 | 🧭 **Accueil guidé** | Au premier lancement, l'appli t'accompagne pas à pas jusqu'au premier clic réussi. |
 | 🎚️ **Réglages clairs** | Vitesse, sensibilité du clic, délai du clic automatique, ouverture au démarrage… |
 | 🔒 **Tout reste sur ton Mac** | Aucune donnée n'est envoyée nulle part. |
@@ -68,12 +77,16 @@ Aucun matériel en plus : l'appli lit les capteurs de mouvement de tes AirPods.
 | Petit « oui » rapide (baisser et revenir) | **Clic** — deux de suite : **double-clic** |
 | Rester immobile ~1 s *(si activé)* | **Clic automatique** |
 | Pencher vite vers une épaule *(si activé)* | **Clic droit** |
+| Glisser haut / bas sur la tige *(si activé)* | **Défiler** — plusieurs glissements rapprochés vont plus loin |
+| Secouer la tête « non » *(si activé)* | **Échap** |
 
 | Raccourci | Action |
 |---|---|
 | `⌃ ⌥ P` | Pause / reprendre |
 | `⌃ ⌥ V` | Ouvrir les réglages |
-| `⌃ ⌥ C` | Calibrer (facultatif) |
+| `⌃ ⌥ C` | Recentrer (regarde le centre de l'écran, puis appuie) |
+| `⌃ ⌥ D` | Glisser-déposer : attraper / lâcher |
+| `⌃ ⌥ S` | Défiler avec la tête (marche / arrêt) |
 | `⌃ ⌥ Q` | Quitter |
 
 L'icône **AirPods** de la barre des menus donne l'état et les options rapides. Sur un MacBook à encoche, elle
@@ -90,6 +103,9 @@ ouvrir les réglages à tout moment.
 | Clics involontaires | Réglages › Clic › Sensibilité **Prudent**. |
 | Le clic ne part pas | Réglages › Clic › Sensibilité **Facile**, ou active le **clic automatique**. |
 | Le curseur part en diagonale | Réglages › Pointeur › **Calibrer…**, ou **Réinitialiser**. |
+| Le curseur n'est plus en face | Regarde le centre de l'écran et appuie sur **⌃⌥C**. |
+| Plus aucun mouvement, AirPods sur les oreilles | Coupe puis rallume le **Bluetooth** (Centre de contrôle) : le service des capteurs de macOS reste parfois bloqué. |
+| Glisser sur la tige ne défile pas | Réglages › Clic › **Défiler avec la tige** ; les AirPods doivent être la sortie audio (AirPods Pro 2). |
 
 Le journal (Réglages › À propos › Ouvrir le journal) note l'état et chaque clic : utile pour signaler un problème.
 
@@ -131,7 +147,7 @@ scripts/make-dmg.sh               # dist/AirPodsMouse-<version>.dmg
 
 **Comment ça marche.** Les rotations des AirPods sont décomposées avec la gravité : le lacet (gauche/droite) ne
 dépend pas de la façon dont les écouteurs sont portés ; le tangage (haut/bas) suit un axe par défaut ou calibré.
-Un filtre « 1 € » lisse le tremblement à basse vitesse sans retard à haute vitesse, et le gain dépend de la vitesse.
+Un filtre « 1 € » lisse le tremblement à   sse vitesse sans retard à haute vitesse, et le gain dépend de la vitesse.
 Les capteurs envoient ~50 mesures/s par paquets Bluetooth : la sortie est lissée à 120 Hz. Un clic = un aller-retour
 court (3–17°) et rapide (< 0,5 s) qui revient au point de départ ; les seuils viennent d'enregistrements réels
 (`Tests/Fixtures`), rejoués à chaque vérification.

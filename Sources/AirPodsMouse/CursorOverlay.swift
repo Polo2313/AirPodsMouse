@@ -48,6 +48,14 @@ struct CursorRing: View {
                     .rotationEffect(.degrees(-90))
                     .shadow(color: .black.opacity(0.35), radius: 2)
             }
+            if model.isDragging || model.scrollMode {
+                Image(systemName: model.isDragging ? "hand.draw.fill" : "arrow.up.and.down.circle.fill")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(.white, Color.brand)
+                    .padding(5)
+                    .background(Color.brand, in: Circle())
+                    .offset(x: 18, y: 18)
+            }
             Circle()
                 .stroke(Color.brand, lineWidth: 3)
                 .scaleEffect(pulse ? 1.25 : 0.4)

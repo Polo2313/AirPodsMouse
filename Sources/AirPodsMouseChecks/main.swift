@@ -2,6 +2,7 @@
 // Lancer : swift run AirPodsMouseChecks   — sort avec le code 1 si une vérification échoue.
 import Foundation
 import AirPodsMouseCore
+import CoreGraphics
 
 var failures = 0
 func check(_ name: String, _ cond: Bool, _ detail: @autoclosure () -> String = "") {
@@ -75,6 +76,159 @@ check("dwellNotAfterRealMouseStops", dwellRun(seconds: 4, path: { _ in here }, r
 let afterHead = dwellRun(seconds: 4, path: { t in t < 1 ? here : (t < 1.3 ? CGPoint(x: 500 + (t - 1) * 200, y: 400) : CGPoint(x: 560, y: 400)) },
                          real: { t in t < 0.5 })
 check("dwellAfterRealMouseThenHead", afterHead.fires == 1, "\(afterHead)")
+
+// MARK: - Alignement tête ↔ curseur
+
+let screen = CGRect(x: 0, y: 0, width: 1470, height: 956)
+let center = CGPoint(x: screen.midX, y: screen.midY)
+
+/// Simule une tête qui tourne (lacet, rad/s ; + = vers la gauche) à 50 mesures/s, avec un curseur bloqué aux bords.
+/// `yawRate(t)` donne la vitesse ; renvoie la position finale du curseur et le moteur.
+func simulateHead(seconds: Double, alignment: Bool = true, engine start: PointerEngine = PointerEngine(),
+                  yawRate: (Double) -> Double) -> (cursor: CGPoint, engine: PointerEngine, path: [CGPoint]) {
+    var e = start; e.alignment = alignment
+    var p = center, t = 0.0, path: [CGPoint] = []
+    let g = V3(0, 0, -1)                        // tête droite : gravité vers le bas
+    while t < seconds {
+        let w = V3(0, 0, yawRate(t))             // lacet = -w·g = w.z
+        let o = e.step(w: w, g: g, dt: 0.02, t: t, screen: ScreenContext(cursor: p, bounds: screen))
+        p = CGPoint(x: min(max(p.x + o.dx, screen.minX), screen.maxX - 1), y: min(max(p.y + o.dy, screen.minY), screen.maxY - 1))
+        path.append(p)
+        t += 0.02
+    }
+    return (p, e, path)
+}
+
+// Regarder bien au-delà du bord droit (~34°), puis revenir en face à la même vitesse → curseur au centre
+let pastEdge = simulateHead(seconds: 3.4) { t in t < 1.2 ? -0.5 : (t < 1.7 ? 0 : (t < 2.9 ? 0.5 : 0)) }
+check("edgeReturnToCenter", abs(pastEdge.cursor.x - center.x) < 60, "x=\(Int(pastEdge.cursor.x)) (centre \(Int(center.x)))")
+
+// Aller rapide (13°), retour lent du même angle → curseur au centre
+// (bornes à mi-pas : 8 mesures × 0,02 s × 1,5 = 0,24 rad ; 60 mesures × 0,02 s × 0,2 = 0,24 rad)
+let fastSlow = simulateHead(seconds: 2.0) { t in t < 0.15 ? -1.5 : (t < 0.29 ? 0 : (t < 1.49 ? 0.2 : 0)) }
+check("fastOutSlowBackReturnsToCenter", abs(fastSlow.cursor.x - center.x) < 60, "x=\(Int(fastSlow.cursor.x))")
+print("   retour du bord : x=\(Int(pastEdge.cursor.x)) ; aller rapide/retour lent : x=\(Int(fastSlow.cursor.x)) (centre \(Int(center.x)))")
+
+// Visée fine (mouvements lents) : l'alignement ne touche à rien
+let slowAim: (Double) -> Double = { t in 0.05 * sin(t * 2) }   // ~1,4° : vraie visée fine
+let withA = simulateHead(seconds: 4, alignment: true, yawRate: slowAim).path
+let withoutA = simulateHead(seconds: 4, alignment: false, yawRate: slowAim).path
+let maxDiff = zip(withA, withoutA).map { abs($0.x - $1.x) + abs($0.y - $1.y) }.max() ?? 0
+check("fineAimUnchangedByAlignment", maxDiff < 1, "écart max \(maxDiff) px")
+
+// Recentrer : la position idéale devient le centre de l'écran
+var turned = simulateHead(seconds: 1) { _ in -0.4 }.engine
+turned.recenter()
+let ideal = turned.idealPosition(in: screen)
+check("recenterPutsIdealAtCenter", ideal.map { hypot($0.x - center.x, $0.y - center.y) < 2 } ?? false, "\(String(describing: ideal))")
+
+// Les clics restent identiques avec l'écran simulé
+let s2 = replay(csv: m2, engine: PointerEngine(), screen: screen)
+let s1 = replay(csv: m1, engine: PointerEngine(), screen: screen)
+check("replayWithScreenKeepsClicks", trueClicks(s2) == 5 && falseClicks(s2) == 0 && falseClicks(s1) == 0,
+      "m2 \(s2.clicksByPhase) m1 faux=\(falseClicks(s1))")
+
+// Bug signalé : « la souris reste bloquée en haut ». L'alignement ne doit pas coller le curseur aux bords haut/bas.
+for (name, csv) in [("motion1", m1), ("motion2", m2)] {
+    var on = PointerEngine(); on.sensitivity = 0.694
+    var off = on; off.alignment = false
+    let a = replay(csv: csv, engine: on, screen: screen).verticalEdgeFraction
+    let b = replay(csv: csv, engine: off, screen: screen).verticalEdgeFraction
+    check("alignmentDoesNotStickVertically[\(name)]", a <= b + 0.01,
+          String(format: "collé haut/bas %.1f %% avec alignement contre %.1f %% sans", a * 100, b * 100))
+}
+
+// MARK: - Défilement par glissement sur la tige
+
+/// Rejoue des notifications de volume (instant, valeur) ; le détecteur remet la référence après chaque glissement,
+/// comme l'appli (la remise produit elle-même une notification au volume de référence).
+func swipes(_ events: [(Double, Double)], start: Double, keyAt: Double? = nil) -> [StemSwipe] {
+    var d = StemSwipeDetector(reference: start)
+    var out: [StemSwipe] = []
+    for (t, v) in events {
+        let key = keyAt.map { t - $0 >= 0 && t - $0 < 0.4 } ?? false
+        if let s = d.volumeChanged(to: v, at: t, keyPressedRecently: key) { out.append(s) }
+    }
+    return out
+}
+// Séquence réelle de l'essai (glisser haut ×3 puis bas ×4), notifications doublées, avec remise à la référence
+let realUp = swipes([(19.9, 0.386), (19.9, 0.386), (19.95, 0.323), (20.8, 0.386), (20.85, 0.323), (21.8, 0.386), (21.85, 0.323)], start: 0.323)
+check("swipeUpDetectedOncePerSwipe", realUp == [.up, .up, .up], "\(realUp)")
+let realDown = swipes([(22.3, 0.260), (22.35, 0.323), (22.8, 0.260), (22.8, 0.260), (22.85, 0.323)], start: 0.323)
+check("swipeDownDetected", realDown == [.down, .down], "\(realDown)")
+check("sliderChangeIsNotASwipe", swipes([(1, 0.5)], start: 0.323).isEmpty)
+check("keyboardVolumeIsNotASwipe", swipes([(1.1, 0.386)], start: 0.323, keyAt: 1.0).isEmpty)
+var keyThenSwipe = StemSwipeDetector(reference: 0.323)
+_ = keyThenSwipe.volumeChanged(to: 0.386, at: 1.1, keyPressedRecently: true)      // touche clavier : nouvelle référence
+check("referenceFollowsKeyboard", keyThenSwipe.volumeChanged(to: 0.449, at: 3, keyPressedRecently: false) == .up
+      && keyThenSwipe.reference == 0.386)
+
+var stepper = ScrollStepper(baseStep: 240)
+let first = stepper.distance(at: 0, up: true), second = stepper.distance(at: 0.5, up: true), third = stepper.distance(at: 1.0, up: true)
+let fourth = stepper.distance(at: 1.4, up: true), fifth = stepper.distance(at: 1.8, up: true)
+let later = stepper.distance(at: 5, up: true)
+check("scrollStepMedium", first == 240, "\(first)")
+check("scrollAccelerates", second == 360 && third == 540, "\(second) \(third)")
+check("scrollAccelerationCapped", fourth == 720 && fifth == 720, "\(fourth) \(fifth)")
+check("scrollResetsAfterPause", later == 240, "\(later)")
+var turn = ScrollStepper(baseStep: 240)
+_ = turn.distance(at: 0, up: true); _ = turn.distance(at: 0.4, up: true)
+let reversed = turn.distance(at: 0.8, up: false)
+check("scrollResetsOnDirectionChange", reversed == 240, "\(reversed)")
+
+// MARK: - Pause pendant la frappe
+
+var typing = TypingGuard()
+typing.keyPressed(at: 10)
+check("typingFreezes", typing.isFrozen(at: 11.2) && !typing.isFrozen(at: 11.7))
+check("typingResumesOnce", typing.justResumed(at: 11.7) && !typing.justResumed(at: 11.8))
+check("typingNotFrozenInitially", !TypingGuard().isFrozen(at: 0))
+
+// MARK: - Défilement à la tête
+
+var hs = HeadScroller()
+hs.start(yaw: 0, pitch: 0)
+check("headScrollDeadZone", hs.velocity(pitch: 0.03) == 0)
+check("headScrollUp", hs.velocity(pitch: 0.17) > 0)                 // tête levée ~10° → défile vers le haut
+check("headScrollDown", hs.velocity(pitch: -0.17) < 0)
+check("headScrollFasterWhenTilted", hs.velocity(pitch: 0.3) > hs.velocity(pitch: 0.15))
+check("headScrollCapped", hs.velocity(pitch: 2) <= hs.maxSpeed)
+check("headScrollExitsWhenLookingAway", hs.shouldExit(yaw: 0.3) && !hs.shouldExit(yaw: 0.1))
+
+// MARK: - Menu de clic rapide
+
+func runMenu(_ path: (Double) -> CGPoint, seconds: Double) -> DwellMenu.Outcome {
+    var m = DwellMenu(origin: CGPoint(x: 500, y: 400), openedAt: 0)
+    var t = 0.0
+    while t <= seconds {
+        let r = m.update(cursor: path(t), t: t)
+        if case .pending = r {} else { return r }
+        t += 1.0 / 120
+    }
+    return .pending(hovered: nil, progress: 0)
+}
+let menu0 = DwellMenu(origin: CGPoint(x: 500, y: 400), openedAt: 0)
+let rightPos = menu0.itemCenter(.rightClick), dragPos = menu0.itemCenter(.drag)
+check("menuItemsAroundOrigin", DwellMenu.Action.allCases.allSatisfy { hypot(menu0.itemCenter($0).x - 500, menu0.itemCenter($0).y - 400) > 50 })
+check("menuChoosesAfterDwell", runMenu({ t in t < 0.2 ? CGPoint(x: 500, y: 400) : rightPos }, seconds: 1.5) == .chosen(.rightClick))
+check("menuSwitchResetsDwell", runMenu({ t in t < 0.5 ? rightPos : dragPos }, seconds: 1.3) == .chosen(.drag))
+check("menuCancelsWhenLeaving", runMenu({ _ in CGPoint(x: 900, y: 400) }, seconds: 1) == .cancelled)
+check("menuCancelsOnTimeout", runMenu({ _ in CGPoint(x: 500, y: 400) }, seconds: 5) == .cancelled)
+
+// MARK: - Geste « non » (secouer la tête) = Échap
+
+func shakes(_ yawRate: (Double) -> Double, pitchRate: (Double) -> Double = { _ in 0 }, seconds: Double) -> Int {
+    var s = ShakeDetector(); var n = 0; var t = 0.0
+    while t < seconds { if s.update(yawRate: yawRate(t), pitchRate: pitchRate(t), t: t, dt: 0.02) { n += 1 }; t += 0.02 }
+    return n
+}
+check("shakeDetected", shakes({ t in t < 1 ? 2.6 * sin(2 * .pi * 3 * t) : 0 }, seconds: 2) == 1)          // « non » ±8°, 3 Hz
+check("shakeIgnoresSlowAiming", shakes({ t in 0.6 * sin(2 * .pi * 0.5 * t) }, seconds: 6) == 0)
+check("shakeIgnoresSingleTurn", shakes({ t in t < 0.4 ? 2.0 : 0 }, seconds: 2) == 0)
+check("shakeIgnoresNods", shakes({ _ in 0.2 }, pitchRate: { t in 2.6 * sin(2 * .pi * 3 * t) }, seconds: 2) == 0)
+for (name, csv) in [("motion1", m1), ("motion2", m2)] {
+    check("shakeNoFalsePositive[\(name)]", replayShakes(csv: csv) == 0, "\(replayShakes(csv: csv)) faux « non »")
+}
 
 print(failures == 0 ? "\nTout est vert." : "\n\(failures) échec(s).")
 exit(failures == 0 ? 0 : 1)

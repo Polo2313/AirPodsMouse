@@ -109,6 +109,29 @@ struct GeneralPane: View {
                          action: model.axTrusted ? nil : ("Ouvrir le réglage", { Permissions.openAccessibilitySettings() }))
             }
 
+            Section {
+                Toggle("Afficher des messages près du curseur", isOn: $model.toasts)
+            } footer: {
+                Text("Une petite bulle signale les AirPods perdus ou retrouvés, la pause, le recentrage, le glisser et le défilement.")
+            }
+
+            Section {
+                Toggle("Figer le curseur pendant la frappe", isOn: $model.typingPause)
+            } footer: {
+                Text("Quand tu tapes, tu regardes le clavier : le curseur reste en place jusqu'à une seconde après la dernière touche.")
+            }
+
+            Section {
+                HStack {
+                    Button { HandsFree.showKeyboard() } label: { Label("Clavier visuel", systemImage: "keyboard") }
+                    Button { HandsFree.startDictation() } label: { Label("Dictée", systemImage: "mic") }
+                }
+            } header: {
+                Text("Écrire sans les mains")
+            } footer: {
+                Text("« Clavier visuel » ouvre le réglage de macOS : active « Clavier d'accessibilité ». « Dictée » démarre la dictée dans l'appli au premier plan.")
+            }
+
             Section("Démarrage") {
                 Toggle("Ouvrir AirPodsMouse au démarrage du Mac", isOn: Binding(get: { model.launchAtLogin },
                                                                               set: { model.launchAtLogin = $0 }))
@@ -116,7 +139,9 @@ struct GeneralPane: View {
 
             Section("Raccourcis clavier") {
                 LabeledContent("Pause / reprendre") { Text(verbatim: "⌃ ⌥ P").monospaced() }
-                LabeledContent("Calibrer") { Text(verbatim: "⌃ ⌥ C").monospaced() }
+                LabeledContent("Recentrer (je regarde le centre)") { Text(verbatim: "⌃ ⌥ C").monospaced() }
+                LabeledContent("Glisser-déposer (attraper / lâcher)") { Text(verbatim: "⌃ ⌥ D").monospaced() }
+                LabeledContent("Défiler avec la tête") { Text(verbatim: "⌃ ⌥ S").monospaced() }
                 LabeledContent("Ouvrir les réglages") { Text(verbatim: "⌃ ⌥ V").monospaced() }
                 LabeledContent("Quitter") { Text(verbatim: "⌃ ⌥ Q").monospaced() }
             }
@@ -160,6 +185,25 @@ struct PointerPane: View {
                               low: "Moins", high: "Plus", format: { String(format: "×%.1f", $0) })
             } footer: {
                 Text("On bouge moins la tête de haut en bas que de gauche à droite : la vitesse verticale compense.")
+            }
+
+            Section {
+                Toggle("Garder la tête alignée avec l'écran", isOn: $model.alignment)
+                HStack {
+                    Text("Recentrer maintenant")
+                    Spacer()
+                    Button("Recentrer") { model.recenter() }
+                }
+            } header: {
+                Text("Alignement")
+            } footer: {
+                Text("Regarder en face de l'écran ramène le curseur au centre, même après avoir regardé au-delà d'un bord. L'appli se recalibre toute seule en continu ; regarde le centre et appuie sur ⌃⌥C pour recentrer tout de suite.")
+            }
+
+            Section {
+                Toggle("Aimant : ralentir sur les boutons", isOn: $model.magnet)
+            } footer: {
+                Text("Au-dessus d'un bouton, d'un lien ou d'une case, le curseur ralentit en visée fine : plus facile de s'arrêter dessus.")
             }
 
             Section("Sens") {
@@ -253,11 +297,42 @@ struct ClickPane: View {
                     } } icon: { SettingsIcon(symbol: "timer", color: .orange) }
                 }
                 if model.dwellEnabled {
+                    Toggle("Ouvrir le menu de clic rapide au lieu de cliquer", isOn: $model.dwellMenu)
                     LabeledSlider(title: "Délai avant le clic", value: $model.dwellDelay, range: 0.6...2,
                                   low: "Court", high: "Long", format: { String(format: "%.1f s", $0) })
                 }
             } footer: {
                 Text("Idéal si les gestes rapides sont difficiles. Pour cliquer à nouveau au même endroit, éloigne un peu le curseur puis reviens.")
+            }
+
+            Section {
+                Toggle(isOn: $model.stemScroll) {
+                    Label { VStack(alignment: .leading, spacing: 2) {
+                        Text("Défiler avec la tige des AirPods")
+                        Text("Glisse le doigt vers le haut ou le bas sur la tige (AirPods Pro 2).").font(.caption).foregroundStyle(.secondary)
+                    } } icon: { SettingsIcon(symbol: "arrow.up.arrow.down", color: .teal) }
+                }
+                if model.stemScroll {
+                    Picker("Pas", selection: $model.scrollStep) {
+                        Text("Petit").tag(0.125)
+                        Text("Moyen").tag(0.25)
+                        Text("Grand").tag(0.5)
+                    }
+                    .pickerStyle(.segmented)
+                }
+            } header: {
+                Text("Défilement")
+            } footer: {
+                Text("Le glissement ne règle plus le volume pendant que c'est activé (le clavier et le menu Son, si). En pause, il règle à nouveau le volume. Plusieurs glissements rapprochés défilent plus loin.")
+            }
+
+            Section {
+                Toggle(isOn: $model.shakeEscape) {
+                    Label { VStack(alignment: .leading, spacing: 2) {
+                        Text("Secouer la tête « non » = Échap")
+                        Text("Pour fermer un menu ou annuler.").font(.caption).foregroundStyle(.secondary)
+                    } } icon: { SettingsIcon(symbol: "escape", color: .red) }
+                }
             }
 
             Section {

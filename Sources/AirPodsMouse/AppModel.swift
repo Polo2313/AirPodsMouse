@@ -24,6 +24,11 @@ final class AppModel: ObservableObject {
     @Published private(set) var calibrationMessage: String?
     /// Vitesses de la tête (rad/s), ~15 fois par seconde : pour l'indicateur de l'accueil.
     @Published private(set) var headRates = SIMD2<Double>(0, 0)
+    @Published private(set) var isDragging = false
+    @Published private(set) var scrollMode = false
+    @Published private(set) var quickMenu: DwellMenu?
+    @Published private(set) var quickMenuHovered: DwellMenu.Action?
+    @Published private(set) var quickMenuProgress = 0.0
 
     // MARK: Réglages
     private let defaults = UserDefaults.standard
@@ -35,15 +40,31 @@ final class AppModel: ObservableObject {
     @Published var invertY = false { didSet { engine.invertY = invertY; defaults.set(invertY, forKey: "invertY") } }
     @Published var nodClick = true { didSet { engine.nodClick = nodClick; defaults.set(nodClick, forKey: "nodClick") } }
     @Published var nodPreset: NodPreset = .normal { didSet { engine.nodPreset = nodPreset; defaults.set(nodPreset.rawValue, forKey: "nodPreset") } }
+    @Published var alignment = true { didSet { engine.alignment = alignment; defaults.set(alignment, forKey: "alignment") } }
     @Published var tiltClick = false { didSet { engine.tiltClick = tiltClick; defaults.set(tiltClick, forKey: "tiltClick") } }
     @Published var dwellEnabled = false { didSet { dwell.reset(); dwellProgress = 0; defaults.set(dwellEnabled, forKey: "dwellEnabled") } }
     @Published var dwellDelay = 1.0 { didSet { dwell.delay = dwellDelay; defaults.set(dwellDelay, forKey: "dwellDelay") } }
+    @Published var stemScroll = false { didSet { stem.setEnabled(stemScroll && !isPaused); defaults.set(stemScroll, forKey: "stemScroll") } }
+    /// Pas de défilement en fraction de hauteur d'écran : petit ⅛, moyen ¼, grand ½.
+    @Published var scrollStep = 0.25 { didSet { defaults.set(scrollStep, forKey: "scrollStep") } }
+    @Published var toasts = true { didSet { defaults.set(toasts, forKey: "toasts") } }
+    @Published var typingPause = true { didSet { defaults.set(typingPause, forKey: "typingPause") } }
+    @Published var magnet = true { didSet { if !magnet { cursor.friction = 1 }; defaults.set(magnet, forKey: "magnet") } }
+    @Published var dwellMenu = false { didSet { defaults.set(dwellMenu, forKey: "dwellMenu") } }
+    @Published var shakeEscape = false { didSet { defaults.set(shakeEscape, forKey: "shakeEscape") } }
     @Published var onboardingDone = false { didSet { defaults.set(onboardingDone, forKey: "onboardingDone") } }
     @Published private(set) var isCalibrated = false
 
     // MARK: Moteur
     private(set) var engine = PointerEngine()
     private var dwell = DwellClicker()
+    private let stem = StemScrollService()
+    private var stepper = ScrollStepper(baseStep: 240)
+    private var typing = TypingGuard()
+    private var scroller = HeadScroller()
+    private var shake = ShakeDetector()
+    private var keyMonitor: Any?
+    private var lastMagnetCheck = Date.distantPast
     private let motion = MotionService()
     let cursor = CursorController()
     private var lastTimestamp: TimeInterval?
@@ -51,6 +72,26 @@ final class AppModel: ObservableObject {
     private var calibEnd = Date.distantPast
     private var lastRatesPublish = Date.distantPast
     private var timers: [Timer] = []
+    private var outputTimer: Timer?
+    private var wasActiveOnce = false
+
+    /// Bulle près du curseur (si activé).
+    private func toast(_ text: String, _ symbol: String) { if toasts { ToastOverlay.shared.show(text, symbol: symbol) } }
+
+    /// La boucle à 120 images/s ne tourne que si elle sert : au repos (AirPods inactifs, pause), l'appli ne réveille
+    /// plus le Mac 120 fois par seconde (mesuré : 1,6 % de processeur au repos avant).
+    private func updateOutputLoop() {
+        let needed = (status == .active && !isPaused) || scrollMode || quickMenu != nil || cursor.hasPendingScroll
+        if needed, outputTimer == nil {
+            let t = Timer(timeInterval: 1.0 / 120, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.outputTick() } }
+            RunLoop.main.add(t, forMode: .common)
+            outputTimer = t
+        } else if !needed, let t = outputTimer {
+            t.invalidate(); outputTimer = nil
+            cursor.dropPending(); dwell.reset(); dwellProgress = 0
+            CursorOverlay.shared.update(visible: false)
+        }
+    }
     var onSample: ((CMDeviceMotion) -> Void)?   // vue 3D
 
     private init() {}
@@ -59,6 +100,35 @@ final class AppModel: ObservableObject {
         Log.line("— Démarrage AirPodsMouse \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "") —")
         loadSettings()
         motion.onSample = { [weak self] m in self?.handle(m) }
+        stem.onSwipe = { [weak self] s in self?.stemSwiped(s) }
+        stem.setEnabled(stemScroll)
+        // Pause pendant la frappe (les raccourcis ⌃⌥ de l'appli ne comptent pas)
+        keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] e in
+            guard !e.modifierFlags.contains([.control, .option]) else { return }
+            // Seulement le vrai clavier : les touches du clavier visuel (envoyées par une appli, pid ≠ 0)
+            // ne doivent pas figer le curseur, sinon impossible de viser la touche suivante avec la tête.
+            guard (e.cgEvent?.getIntegerValueField(.eventSourceUnixProcessID) ?? 0) == 0 else { return }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let now = ProcessInfo.processInfo.systemUptime
+                if self.typingPause && !self.typing.isFrozen(at: now) { Log.line("Frappe : curseur figé") }
+                self.typing.keyPressed(at: now)
+            }
+        }
+        // Retour de veille : les capteurs restent souvent muets → on les relance, puis on recentre
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                Log.line("Réveil du Mac : relance des capteurs")
+                self?.motion.start()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { MainActor.assumeIsolated { self?.recenter() } }
+            }
+        }
+        // Écran branché ou débranché : on recentre
+        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                MainActor.assumeIsolated { Log.line("Écrans modifiés"); self?.recenter() }
+            }
+        }
         motion.onConnectionChange = { [weak self] c in self?.airPodsConnected = c; if !c { self?.cursor.dropPending() } }
         axTrusted = Permissions.axTrusted
         cursor.allowed = axTrusted
@@ -66,8 +136,7 @@ final class AppModel: ObservableObject {
         // (sinon elle apparaît par-dessus l'écran de bienvenue, sans explication).
         if onboardingDone || Permissions.motion != .notDetermined { motion.start() }
         let health = Timer(timeInterval: 1, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.healthCheck() } }
-        let output = Timer(timeInterval: 1.0 / 120, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.outputTick() } }
-        timers = [health, output]
+        timers = [health]
         timers.forEach { RunLoop.main.add($0, forMode: .common) }
         healthCheck()
     }
@@ -91,30 +160,153 @@ final class AppModel: ObservableObject {
             if Date() >= calibEnd { finishCalibration() }
             return
         }
-        let out = engine.step(w: w, g: g, dt: rawDt, t: m.timestamp)
+        let out = engine.step(w: w, g: g, dt: rawDt, t: m.timestamp, screen: cursor.screenContext)
         guard !isPaused, axTrusted else { cursor.dropPending(); return }
+        let now = ProcessInfo.processInfo.systemUptime
+        let dt = min(max(rawDt, 0.001), 0.1)
+
+        // Pause pendant la frappe : le moteur suit la tête, mais rien ne bouge ni ne clique
+        if typingPause && typing.isFrozen(at: now) { cursor.dropPending(); dwell.reset(); return }
+        if typing.justResumed(at: now) { engine.reset(); cursor.dropPending(); return }   // reprise sans saut
+
+        // Geste « non » = Échap
+        if shakeEscape {
+            let r = engine.rates(w: w, g: g)
+            if shake.update(yawRate: r.yaw, pitchRate: r.pitch, t: now, dt: dt) {
+                cursor.dropPending(); cursor.pressEscape(); Log.line("Échap (geste « non »)")
+                toast(String(localized: "Échap"), "escape")
+                return
+            }
+        }
+
+        // Mode défilement à la tête : curseur figé, pencher fait défiler ; hochement ou regard de côté pour sortir
+        if scrollMode, let a = engine.headAngles {
+            if out.click != nil || scroller.shouldExit(yaw: a.yaw) { exitScrollMode(); return }
+            cursor.scroll(by: scroller.velocity(pitch: a.pitch) * dt)
+            return
+        }
+
         cursor.add(dx: out.dx, dy: out.dy)
         if let c = out.click {
+            if quickMenu != nil { closeQuickMenu() }   // un hochement referme le menu de clic rapide
             cursor.flush()   // applique le reste (dont la correction du glissement), puis clique à cet endroit
             click(right: c == .right, source: c == .right ? "inclinaison" : "hochement")
         }
     }
 
+    private func stemSwiped(_ s: StemSwipe) {
+        guard !isPaused, axTrusted else { return }
+        stepper.baseStep = cursor.screenContext.bounds.height * scrollStep
+        let d = stepper.distance(at: ProcessInfo.processInfo.systemUptime, up: s == .up)
+        cursor.scroll(by: s == .up ? d : -d)
+        updateOutputLoop()
+        Log.line("Défilement \(s == .up ? "haut" : "bas") (\(Int(d)) px)")
+    }
+
     private func outputTick() {
+        cursor.scrollTick()
         let fresh = motion.lastSampleAt.map { Date().timeIntervalSince($0) < 0.3 } ?? false
         let realMoved = cursor.tick(sensorsFresh: fresh && !isPaused && axTrusted)
         let recentClick = lastClickAt.map { Date().timeIntervalSince($0) < 0.4 } ?? false
-        CursorOverlay.shared.update(visible: dwellProgress > 0.03 || recentClick)
-        guard dwellEnabled, status == .active else {
+        CursorOverlay.shared.update(visible: dwellProgress > 0.03 || recentClick || isDragging || scrollMode)
+        let now = ProcessInfo.processInfo.systemUptime
+
+        // Aimant : ~10 fois par seconde, ralentir si le curseur survole un élément cliquable
+        if magnet && status == .active && Date().timeIntervalSince(lastMagnetCheck) > 0.1 {
+            lastMagnetCheck = Date()
+            cursor.friction = ClickableProbe.isClickable(at: cursor.pos) ? 0.5 : 1
+        }
+
+        // Menu de clic rapide ouvert : viser une action et rester immobile
+        if var menu = quickMenu {
+            let r = menu.update(cursor: cursor.pos, t: now)
+            quickMenu = menu
+            switch r {
+            case .pending(let h, let p):
+                if h != quickMenuHovered { quickMenuHovered = h }
+                if abs(p - quickMenuProgress) > 0.02 || (p == 0) != (quickMenuProgress == 0) { quickMenuProgress = p }
+            case .chosen(let a): closeQuickMenu(); perform(a, at: menu.origin)
+            case .cancelled: closeQuickMenu(); Log.line("Menu de clic annulé")
+            }
+            return
+        }
+
+        let typingFrozen = typingPause && typing.isFrozen(at: now)
+        guard dwellEnabled, status == .active, !scrollMode, !typingFrozen else {
             if dwellProgress != 0 { dwellProgress = 0 }
             return
         }
-        let r = dwell.update(cursor: cursor.pos, t: ProcessInfo.processInfo.systemUptime, realMouseMoved: realMoved)
+        let r = dwell.update(cursor: cursor.pos, t: now, realMouseMoved: realMoved)
         if abs(r.progress - dwellProgress) > 0.02 || (r.progress == 0) != (dwellProgress == 0) { dwellProgress = r.progress }
-        if r.fire { click(right: false, source: "automatique") }
+        guard r.fire else { return }
+        if dwellMenu && !isDragging { openQuickMenu(at: cursor.pos, t: now) }
+        else { click(right: false, source: "automatique") }
+    }
+
+    // MARK: - Menu de clic rapide
+
+    private func openQuickMenu(at p: CGPoint, t: Double) {
+        quickMenu = DwellMenu(origin: p, openedAt: t)
+        quickMenuHovered = nil; quickMenuProgress = 0; dwellProgress = 0
+        QuickMenuOverlay.shared.show(at: p)
+        Log.line("Menu de clic ouvert")
+    }
+
+    private func closeQuickMenu() {
+        quickMenu = nil; quickMenuHovered = nil; quickMenuProgress = 0
+        QuickMenuOverlay.shared.hide()
+        dwell.reset()
+    }
+
+    private func perform(_ a: DwellMenu.Action, at origin: CGPoint) {
+        cursor.moveTo(origin)
+        switch a {
+        case .click: click(right: false, source: "menu")
+        case .doubleClick:
+            click(right: false, source: "menu")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                MainActor.assumeIsolated { self?.click(right: false, source: "menu, double") }
+            }
+        case .rightClick: click(right: true, source: "menu")
+        case .drag: toggleDrag()
+        case .scroll: toggleScrollMode()
+        }
+    }
+
+    // MARK: - Glisser-déposer et défilement à la tête
+
+    /// Attrape (bouton enfoncé) ou lâche. Le clic suivant (hochement, clic auto) lâche aussi.
+    func toggleDrag() {
+        guard axTrusted, !isPaused else { return }
+        if cursor.dragging { cursor.endDrag(); isDragging = false; Log.line("Lâché"); toast(String(localized: "Lâché"), "hand.raised.fill") }
+        else {
+            cursor.startDrag(); isDragging = true; Log.line("Attrapé (glisser)")
+            toast(String(localized: "Attrapé — hoche la tête pour lâcher"), "hand.draw.fill")
+        }
+        lastClickAt = Date()
+    }
+
+    func toggleScrollMode() {
+        if scrollMode { exitScrollMode(); return }
+        guard axTrusted, !isPaused, let a = engine.headAngles else { return }
+        scroller.start(yaw: a.yaw, pitch: a.pitch)
+        cursor.dropPending()
+        scrollMode = true
+        updateOutputLoop()
+        Log.line("Mode défilement : penche la tête")
+        toast(String(localized: "Défilement : penche la tête, hoche pour arrêter"), "arrow.up.and.down.circle.fill")
+    }
+
+    private func exitScrollMode() {
+        guard scrollMode else { return }
+        scrollMode = false
+        engine.reset(); cursor.dropPending()
+        Log.line("Fin du mode défilement")
+        toast(String(localized: "Fin du défilement"), "checkmark.circle.fill")
     }
 
     private func click(right: Bool, source: String) {
+        if cursor.dragging && !right { toggleDrag(); return }   // pendant un glisser, « cliquer » lâche
         cursor.click(right: right)
         lastClickAt = Date()
         Log.line("Clic \(right ? "droit" : "gauche") (\(source)) en \(Int(cursor.pos.x)),\(Int(cursor.pos.y))")
@@ -126,6 +318,7 @@ final class AppModel: ObservableObject {
         let trusted = Permissions.axTrusted
         if trusted != axTrusted {
             Log.line(trusted ? "Accessibilité accordée ✅" : "Accessibilité retirée")
+            if !trusted && cursor.dragging { cursor.endDrag(); isDragging = false }   // relâcher avant de perdre la main
             axTrusted = trusted
             cursor.allowed = trusted
         }
@@ -136,15 +329,34 @@ final class AppModel: ObservableObject {
         else if !motion.isStreaming { new = Date().timeIntervalSince(motion.startedAt) < 3 ? .searching : .noMotion }
         else if isPaused { new = .paused }
         else { new = .active }
-        if new != status { status = new; Log.line("État : \(new)") }
+        if new != status {
+            if new != .active && new != .paused && cursor.dragging { toggleDrag(); Log.line("Glisser relâché (plus de mouvement)") }
+            if status == .active && new == .noMotion { toast(String(localized: "AirPods : plus de mouvement"), "exclamationmark.triangle.fill") }
+            if new == .active && wasActiveOnce && (status == .noMotion || status == .searching) { toast(String(localized: "AirPods de retour"), "airpodspro") }
+            if new == .active { wasActiveOnce = true }
+            status = new; Log.line("État : \(new)")
+        }
+        updateOutputLoop()
     }
 
     // MARK: - Actions
 
     func togglePause() {
         isPaused.toggle()
+        toast(isPaused ? String(localized: "En pause — ⌃⌥P pour reprendre") : String(localized: "Reprise"),
+              isPaused ? "pause.circle.fill" : "play.circle.fill")
+        if isPaused { if cursor.dragging { toggleDrag() }; exitScrollMode(); if quickMenu != nil { closeQuickMenu() } }
+        stem.setEnabled(stemScroll && !isPaused)   // en pause, la tige règle à nouveau le volume
         cursor.dropPending(); engine.reset(); dwell.reset()
         healthCheck()
+    }
+
+    /// « Je regarde le centre de l'écran » : la direction actuelle de la tête devient le centre.
+    func recenter() {
+        engine.recenter()
+        cursor.moveToCenter()
+        toast(String(localized: "Recentré"), "scope")
+        Log.line("Recentré")
     }
 
     func startCalibration() {
@@ -180,6 +392,7 @@ final class AppModel: ObservableObject {
         defaults.set([axis.x, axis.y, axis.z], forKey: "vAxis")
         isCalibrated = true
         calibrationMessage = String(localized: "Calibré ✅")
+        toast(String(localized: "Calibré ✅"), "checkmark.circle.fill")
         NSSound(named: "Glass")?.play()
         Log.line("Calibré : \(axis)")
 
@@ -187,7 +400,7 @@ final class AppModel: ObservableObject {
     }
 
     func resetSettings() {
-        for k in ["sensitivity", "verticalRatio", "invertX", "invertY", "nodClick", "nodPreset", "tiltClick", "dwellEnabled", "dwellDelay", "vAxis"] {
+        for k in ["sensitivity", "verticalRatio", "invertX", "invertY", "nodClick", "nodPreset", "tiltClick", "dwellEnabled", "dwellDelay", "vAxis", "alignment", "stemScroll", "scrollStep", "typingPause", "magnet", "dwellMenu", "shakeEscape", "toasts"] {
             defaults.removeObject(forKey: k)
         }
         loadSettings()
@@ -252,6 +465,14 @@ final class AppModel: ObservableObject {
         nodClick = b("nodClick", true)
         nodPreset = NodPreset(rawValue: defaults.integer(forKey: "nodPreset")).flatMap { defaults.object(forKey: "nodPreset") != nil ? $0 : nil } ?? .normal
         tiltClick = b("tiltClick", false)
+        alignment = b("alignment", true)
+        stemScroll = b("stemScroll", false)
+        typingPause = b("typingPause", true)
+        toasts = b("toasts", true)
+        magnet = b("magnet", true)
+        dwellMenu = b("dwellMenu", false)
+        shakeEscape = b("shakeEscape", false)
+        scrollStep = [0.125, 0.25, 0.5].contains(d("scrollStep", 0.25)) ? d("scrollStep", 0.25) : 0.25
         dwellEnabled = b("dwellEnabled", false)
         dwellDelay = min(max(d("dwellDelay", 1), 0.6), 2)
         onboardingDone = b("onboardingDone", false)

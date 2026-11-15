@@ -1,4 +1,5 @@
 import AppKit
+import AirPodsMouseCore
 import CoreGraphics
 
 /// Déplace le curseur et clique, en envoyant de vrais événements souris (autorisation Accessibilité requise).
@@ -26,7 +27,61 @@ final class CursorController {
         }
     }
 
-    func add(dx: Double, dy: Double) { pending.x += dx; pending.y += dy }
+    /// Aimant : < 1 quand le curseur survole un élément cliquable (ralentit la visée fine pour s'y arrêter).
+    var friction = 1.0
+
+    func add(dx: Double, dy: Double) {
+        // Ralentir seulement les petits mouvements (visée fine) : un mouvement franc sort du bouton sans effort
+        let k = hypot(dx, dy) < 8 ? friction : 1
+        pending.x += dx * k; pending.y += dy * k
+    }
+
+    // MARK: - Glisser-déposer
+    private(set) var dragging = false
+
+    func startDrag() {
+        guard allowed, !dragging else { return }
+        flush()
+        let p = CGPoint(x: pos.x.rounded(), y: pos.y.rounded())
+        CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap)
+        dragging = true
+    }
+
+    func endDrag() {
+        guard dragging else { return }
+        flush()
+        let p = CGPoint(x: pos.x.rounded(), y: pos.y.rounded())
+        CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap)
+        dragging = false
+    }
+
+    /// Place le curseur à un point précis (retour au point d'origine après le menu de clic rapide).
+    func moveTo(_ p: CGPoint) { pending = .zero; move(by: CGPoint(x: p.x - pos.x, y: p.y - pos.y)) }
+
+    /// Envoie la touche Échap (geste « non »).
+    func pressEscape() {
+        guard allowed else { return }
+        for down in [true, false] {
+            CGEvent(keyboardEventSource: source, virtualKey: 53, keyDown: down)?.post(tap: .cghidEventTap)
+        }
+    }
+
+    // MARK: - Défilement (réparti sur quelques images pour être fluide)
+    private var pendingScroll = 0.0
+    var hasPendingScroll: Bool { abs(pendingScroll) >= 1 }
+
+    /// - Parameter pixels: > 0 = vers le haut du document, < 0 = vers le bas.
+    func scroll(by pixels: Double) { pendingScroll += pixels }
+
+    /// À chaque image : envoie une part du défilement en attente.
+    func scrollTick() {
+        guard allowed, abs(pendingScroll) >= 1 else { pendingScroll = 0; return }
+        var step = (pendingScroll * 0.2).rounded()
+        if abs(step) < 1 { step = pendingScroll > 0 ? 1 : -1 }
+        pendingScroll -= step
+        CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 1, wheel1: Int32(step), wheel2: 0, wheel3: 0)?
+            .post(tap: .cghidEventTap)
+    }
 
     func dropPending() { pending = .zero }
 
@@ -67,8 +122,8 @@ final class CursorController {
         pos = clampToScreens(CGPoint(x: pos.x + d.x, y: pos.y + d.y), from: pos)
         let p = CGPoint(x: pos.x.rounded(), y: pos.y.rounded())
         guard p != recentPosted.last else { return }
-        CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left)?
-            .post(tap: .cghidEventTap)
+        CGEvent(mouseEventSource: source, mouseType: dragging ? .leftMouseDragged : .mouseMoved,
+                mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap)
         recentPosted.append(p)
         if recentPosted.count > 6 { recentPosted.removeFirst() }
     }
@@ -95,6 +150,20 @@ final class CursorController {
     }
 
     // MARK: - Écrans
+
+    /// Curseur (y compris le mouvement pas encore appliqué) et écran qui le contient, pour l'alignement tête ↔ écran.
+    var screenContext: ScreenContext {
+        let p = CGPoint(x: pos.x + pending.x, y: pos.y + pending.y)
+        let b = screens.first { $0.contains(pos) } ?? screens.first ?? CGDisplayBounds(CGMainDisplayID())
+        return ScreenContext(cursor: p, bounds: b)
+    }
+
+    /// Place le curseur au centre de l'écran où il se trouve.
+    func moveToCenter() {
+        pending = .zero
+        let b = screenContext.bounds
+        move(by: CGPoint(x: b.midX - pos.x, y: b.midY - pos.y))
+    }
 
     private func refreshScreens() {
         var count: UInt32 = 0

@@ -1,5 +1,6 @@
 // Moteur de pointage : transforme les rotations des AirPods en déplacements du curseur et en clics.
 // Indépendant de l'interface (testable en rejouant un enregistrement : voir tools/replay.swift).
+import CoreGraphics
 import Foundation
 import simd
 
@@ -140,6 +141,13 @@ public struct PointerOutput {
     public init() {}
 }
 
+/// Où se trouve le curseur, et l'écran qui le contient (coordonnées écran, origine en haut à gauche).
+public struct ScreenContext {
+    public var cursor: CGPoint
+    public var bounds: CGRect
+    public init(cursor: CGPoint, bounds: CGRect) { self.cursor = cursor; self.bounds = bounds }
+}
+
 public struct PointerEngine {
     public init() {}
     // Réglages
@@ -156,6 +164,19 @@ public struct PointerEngine {
     }
     public var tiltClick = false
     public var axis: V3?                    // axe haut/bas calibré (repère écouteur), sinon axe par défaut
+    /// Garde « en face de l'écran = curseur au centre » (mémoire des bords, réalignement, référence recalibrée).
+    public var alignment = true
+    /// Alignement vertical désactivé : on ne bouge la tête que de ±6° pour couvrir l'écran en hauteur, mais bien plus
+    /// pour regarder le clavier, et l'angle vertical dérive (+4° mesurés rien qu'en hochant la tête). Aligné, le curseur
+    /// restait collé en haut ou en bas (28 % du temps au rejeu contre 14 %). L'horizontal suffit au besoin exprimé.
+    public var alignVertical = false
+    public var alignGain = 2600.0           // px par radian de la correspondance tête ↔ écran (× sensibilité)
+    public var alignStrength = 0.08         // part de l'écart corrigée à chaque mesure, mouvements rapides seulement
+    public var alignSpeedLow = 0.3, alignSpeedHigh = 1.0   // rad/s : pas de correction en visée fine
+    public var referenceTimeConstant = 120.0 // s : le « en face » suit lentement la position habituelle de la tête
+    public var catchUpFrom = 60.0, catchUpFull = 200.0   // px d'écart : rattrapage dans le sens du mouvement
+    public var catchUpRate = 0.06           // part de l'écart rattrapée par mesure (≈ 50/s)
+    public var catchUpMaxFactor = 2.0       // le rattrapage n'ajoute jamais plus de 2× le mouvement de la tête
 
     // État
     private var yawAngle = 0.0, pitchAngle = 0.0
@@ -167,6 +188,7 @@ public struct PointerEngine {
     private var heldX = 0.0, heldY = 0.0
     private var recent: [(t: Double, dx: Double, dy: Double)] = []   // derniers déplacements émis
     private var gestureStart: Double?
+    private var refYaw: Double?, refPitch: Double?   // direction « en face » (correspond au centre de l'écran)
 
     public static func defaultAxis(_ g: V3) -> V3 { abs(g.x) < 0.7 ? V3(1, 0, 0) : V3(0, 1, 0) }
 
@@ -193,7 +215,75 @@ public struct PointerEngine {
         lastYaw = nil; lastPitch = nil; heldX = 0; heldY = 0
     }
 
-    public mutating func step(w: V3, g: V3, dt rawDt: Double, t: Double) -> PointerOutput {
+    /// Remet la référence « en face » sur la direction actuelle de la tête ; l'appelant place le curseur au centre.
+    public mutating func recenter() { refYaw = lastYaw; refPitch = lastPitch }
+
+    /// Direction filtrée de la tête (rad) : lacet (+ = gauche), tangage (+ = haut). Nil avant la première mesure.
+    public var headAngles: (yaw: Double, pitch: Double)? {
+        guard let y = lastYaw, let p = lastPitch else { return nil }
+        return (y, p)
+    }
+
+    /// Position où le curseur devrait être d'après la direction de la tête (en face = centre de `bounds`).
+    public func idealPosition(in bounds: CGRect) -> CGPoint? {
+        guard let y = lastYaw, let p = lastPitch else { return nil }
+        return ideal(yaw: y, pitch: p, bounds: bounds)
+    }
+
+    private func ideal(yaw: Double, pitch: Double, bounds: CGRect) -> CGPoint? {
+        guard let ry = refYaw, let rp = refPitch else { return nil }
+        let k = alignGain * sensitivity
+        return CGPoint(x: bounds.midX - (yaw - ry) * k * (invertX ? -1 : 1),
+                       y: bounds.midY - (pitch - rp) * k * verticalRatio * (invertY ? -1 : 1))
+    }
+
+    /// Mémoire des bords, réalignement pendant les mouvements rapides, et « en face » recalibré en continu.
+    private mutating func align(dx: inout Double, dy: inout Double, yaw fy: Double, pitch fp: Double,
+                                speed: Double, dt: Double, screen sc: ScreenContext) {
+        let b = sc.bounds, c = sc.cursor
+        let k = alignGain * sensitivity
+        if refYaw == nil || refPitch == nil {
+            // Première mesure : la référence est choisie pour que la position idéale soit le curseur actuel (pas de saut)
+            refYaw = fy + (c.x - b.midX) / k * (invertX ? -1 : 1)
+            refPitch = fp + (c.y - b.midY) / (k * verticalRatio) * (invertY ? -1 : 1)
+        }
+        guard let target = ideal(yaw: fy, pitch: fp, bounds: b) else { return }
+        let atLeft = c.x <= b.minX + 0.5, atRight = c.x >= b.maxX - 1.5
+        let atTop = c.y <= b.minY + 0.5, atBottom = c.y >= b.maxY - 1.5
+
+        // Mémoire des bords : la tête a dépassé le bord → le curseur n'en repart que quand elle y est revenue
+        if atLeft && target.x < b.minX && dx > 0 { dx = 0 }
+        if atRight && target.x > b.maxX - 1 && dx < 0 { dx = 0 }
+        if alignVertical && atTop && target.y < b.minY && dy > 0 { dy = 0 }
+        if alignVertical && atBottom && target.y > b.maxY - 1 && dy < 0 { dy = 0 }
+
+        // Réalignement, seulement pendant les mouvements rapides (invisible), jamais en visée fine
+        let w = smoothstep(alignSpeedLow, alignSpeedHigh, speed) * alignStrength
+        if w > 0 {
+            let tx = min(max(target.x, b.minX), b.maxX - 1), ty = min(max(target.y, b.minY), b.maxY - 1)
+            dx += (tx - (c.x + dx)) * w
+            if alignVertical { dy += (ty - (c.y + dy)) * w }
+        }
+
+        // Rattrapage : quand le curseur est loin de sa position idéale et qu'on bouge vers elle, il avance un peu
+        // plus vite (jamais à contre-sens, jamais à l'arrêt, rien quand l'écart est petit = visée fine).
+        func catchUp(_ d: Double, _ err: Double) -> Double {
+            guard d != 0, (d > 0) == (err > 0) else { return d }
+            let extra = err * catchUpRate * smoothstep(catchUpFrom, catchUpFull, abs(err))
+            return d + (extra > 0 ? min(extra, abs(d) * catchUpMaxFactor) : max(extra, -abs(d) * catchUpMaxFactor))
+        }
+        dx = catchUp(dx, target.x - (c.x + dx))
+        if alignVertical { dy = catchUp(dy, target.y - (c.y + dy)) }
+
+        // « En face » recalibré : la référence suit lentement la direction habituelle de la tête
+        if !(atLeft || atRight || (alignVertical && (atTop || atBottom))), let ry = refYaw, let rp = refPitch {
+            let a = min(dt / referenceTimeConstant, 1)
+            refYaw = ry + (fy - ry) * a
+            refPitch = rp + (fp - rp) * a
+        }
+    }
+
+    public mutating func step(w: V3, g: V3, dt rawDt: Double, t: Double, screen: ScreenContext? = nil) -> PointerOutput {
         var out = PointerOutput()
         let gap = rawDt > 0.15
         let dt = min(max(rawDt, 0.001), 0.1)
@@ -240,6 +330,7 @@ public struct PointerEngine {
         }
         if discard { heldX = 0; heldY = 0; return out }
         if holding { heldX += dx; heldY += dy; return out }
+        if alignment, let sc = screen { align(dx: &dx, dy: &dy, yaw: fy, pitch: fp, speed: speed, dt: dt, screen: sc) }
         out.dx = dx; out.dy = dy
         recent.append((t, dx, dy))
         return out

@@ -18,6 +18,11 @@ struct MenuBarContent: View {
         Toggle("Clic automatique", isOn: $model.dwellEnabled)
         Toggle("Clic par hochement de tête", isOn: $model.nodClick)
         Divider()
+        Button(model.isDragging ? LocalizedStringKey("Lâcher") : LocalizedStringKey("Glisser-déposer")) { model.toggleDrag() }
+        Button(model.scrollMode ? LocalizedStringKey("Arrêter de défiler") : LocalizedStringKey("Défiler avec la tête")) { model.toggleScrollMode() }
+        Button("Clavier visuel") { HandsFree.showKeyboard() }
+        Button("Dictée") { HandsFree.startDictation() }
+        Divider()
         Button("Réglages…") { WindowManager.shared.showSettings() }
             .keyboardShortcut(",")
         Button("Quitter AirPodsMouse") { NSApp.terminate(nil) }

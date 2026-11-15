@@ -25,9 +25,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.setActivationPolicy(.accessory)
             HotKeys.register()
             AppModel.shared.start()
+            if CommandLine.arguments.contains("--test-toast") {   // vérification visuelle de la bulle
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    MainActor.assumeIsolated { ToastOverlay.shared.show(String(localized: "Recentré"), symbol: "scope") }
+                }
+            }
             if AppModel.shared.onboardingDone { WindowManager.shared.showSettings() }
             else { WindowManager.shared.showOnboarding() }
         }
+    }
+
+    /// Ne jamais quitter avec le bouton de la souris enfoncé (glisser en cours).
+    func applicationWillTerminate(_ notification: Notification) {
+        MainActor.assumeIsolated { if AppModel.shared.cursor.dragging { AppModel.shared.cursor.endDrag() } }
     }
 
     /// Double-clic sur l'appli déjà ouverte (utile si l'icône est cachée par l'encoche) → Réglages.

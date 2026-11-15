@@ -43,7 +43,6 @@
 "Ouvrir AirPodsMouse au démarrage du Mac" = "Open AirPodsMouse when the Mac starts";
 "Raccourcis clavier" = "Keyboard shortcuts";
 "Pause / reprendre" = "Pause / resume";
-"Calibrer" = "Calibrate";
 "Ouvrir les réglages" = "Open Settings";
 "Quitter" = "Quit";
 
@@ -135,3 +134,55 @@
 /* Réveil des AirPods */
 "Ramener les AirPods sur ce Mac" = "Bring AirPods back to this Mac";
 "AirPodsMouse est prêt." = "AirPodsMouse is ready.";
+
+/* Alignement */
+"Recentrer (je regarde le centre)" = "Recenter (I'm looking at the center)";
+"Garder la tête alignée avec l'écran" = "Keep head aligned with the screen";
+"Recentrer maintenant" = "Recenter now";
+"Alignement" = "Alignment";
+"Regarder en face de l'écran ramène le curseur au centre, même après avoir regardé au-delà d'un bord. L'appli se recalibre toute seule en continu ; regarde le centre et appuie sur ⌃⌥C pour recentrer tout de suite." = "Looking straight at the screen brings the pointer back to the center, even after looking past an edge. The app recalibrates itself continuously; look at the center and press ⌃⌥C to recenter right away.";
+
+/* Défilement */
+"Défiler avec la tige des AirPods" = "Scroll with the AirPods stem";
+"Glisse le doigt vers le haut ou le bas sur la tige (AirPods Pro 2)." = "Swipe up or down on the stem (AirPods Pro 2).";
+"Pas" = "Step";
+"Petit" = "Small";
+"Moyen" = "Medium";
+"Grand" = "Large";
+"Défilement" = "Scrolling";
+"Le glissement ne règle plus le volume pendant que c'est activé (le clavier et le menu Son, si). En pause, il règle à nouveau le volume. Plusieurs glissements rapprochés défilent plus loin." = "While this is on, swiping no longer changes the volume (the keyboard and Sound menu still do). When paused, swiping changes the volume again. Several quick swipes scroll further.";
+
+/* Nouvelles fonctions */
+"Figer le curseur pendant la frappe" = "Freeze the pointer while typing";
+"Quand tu tapes, tu regardes le clavier : le curseur reste en place jusqu'à une seconde après la dernière touche." = "When you type you look at the keyboard: the pointer stays put until a second after the last key.";
+"Écrire sans les mains" = "Hands-free typing";
+"Clavier visuel" = "On-screen keyboard";
+"Dictée" = "Dictation";
+"Glisser-déposer (attraper / lâcher)" = "Drag and drop (grab / release)";
+"Défiler avec la tête" = "Scroll with your head";
+"Aimant : ralentir sur les boutons" = "Magnet: slow down over buttons";
+"Au-dessus d'un bouton, d'un lien ou d'une case, le curseur ralentit en visée fine : plus facile de s'arrêter dessus." = "Over a button, link or checkbox, the pointer slows down when aiming finely: easier to stop on it.";
+"Ouvrir le menu de clic rapide au lieu de cliquer" = "Open the quick click menu instead of clicking";
+"Secouer la tête « non » = Échap" = "Shake your head “no” = Escape";
+"Pour fermer un menu ou annuler." = "To close a menu or cancel.";
+"Lâcher" = "Release";
+"Glisser-déposer" = "Drag and drop";
+"Arrêter de défiler" = "Stop scrolling";
+"Double-clic" = "Double-click";
+"Glisser" = "Drag";
+"Défiler" = "Scroll";
+"« Clavier visuel » ouvre le réglage de macOS : active « Clavier d'accessibilité ». « Dictée » démarre la dictée dans l'appli au premier plan." = "“On-screen keyboard” opens the macOS setting: turn on “Accessibility Keyboard”. “Dictation” starts dictation in the frontmost app.";
+
+/* Bulles */
+"Afficher des messages près du curseur" = "Show messages near the pointer";
+"Une petite bulle signale les AirPods perdus ou retrouvés, la pause, le recentrage, le glisser et le défilement." = "A small bubble tells you when AirPods are lost or back, pausing, recentering, dragging and scrolling.";
+"AirPods : plus de mouvement" = "AirPods: no more motion";
+"AirPods de retour" = "AirPods are back";
+"En pause — ⌃⌥P pour reprendre" = "Paused — ⌃⌥P to resume";
+"Reprise" = "Resumed";
+"Recentré" = "Recentered";
+"Attrapé — hoche la tête pour lâcher" = "Grabbed — nod to release";
+"Défilement : penche la tête, hoche pour arrêter" = "Scrolling: tilt your head, nod to stop";
+"Fin du défilement" = "Scrolling off";
+"Échap" = "Escape";
+"Lâché" = "Released";
