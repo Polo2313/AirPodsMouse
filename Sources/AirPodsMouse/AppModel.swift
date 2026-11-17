@@ -32,7 +32,7 @@ final class AppModel: ObservableObject {
 
     // MARK: Réglages
     private let defaults = UserDefaults.standard
-    static let settingsVersion = 3
+    static let settingsVersion = 4
 
     @Published var sensitivity = 1.0 { didSet { engine.sensitivity = sensitivity; defaults.set(sensitivity, forKey: "sensitivity") } }
     @Published var verticalRatio = 2.4 { didSet { engine.verticalRatio = verticalRatio; defaults.set(verticalRatio, forKey: "verticalRatio") } }
@@ -40,7 +40,7 @@ final class AppModel: ObservableObject {
     @Published var invertY = false { didSet { engine.invertY = invertY; defaults.set(invertY, forKey: "invertY") } }
     @Published var nodClick = true { didSet { engine.nodClick = nodClick; defaults.set(nodClick, forKey: "nodClick") } }
     @Published var nodPreset: NodPreset = .normal { didSet { engine.nodPreset = nodPreset; defaults.set(nodPreset.rawValue, forKey: "nodPreset") } }
-    @Published var alignment = true { didSet { engine.alignment = alignment; defaults.set(alignment, forKey: "alignment") } }
+    @Published var alignment = false { didSet { engine.alignment = alignment; defaults.set(alignment, forKey: "alignment") } }
     @Published var tiltClick = false { didSet { engine.tiltClick = tiltClick; defaults.set(tiltClick, forKey: "tiltClick") } }
     @Published var dwellEnabled = false { didSet { dwell.reset(); dwellProgress = 0; defaults.set(dwellEnabled, forKey: "dwellEnabled") } }
     @Published var dwellDelay = 1.0 { didSet { dwell.delay = dwellDelay; defaults.set(dwellDelay, forKey: "dwellDelay") } }
@@ -49,7 +49,7 @@ final class AppModel: ObservableObject {
     @Published var scrollStep = 0.25 { didSet { defaults.set(scrollStep, forKey: "scrollStep") } }
     @Published var toasts = true { didSet { defaults.set(toasts, forKey: "toasts") } }
     @Published var typingPause = true { didSet { defaults.set(typingPause, forKey: "typingPause") } }
-    @Published var magnet = true { didSet { if !magnet { cursor.friction = 1 }; defaults.set(magnet, forKey: "magnet") } }
+    @Published var magnet = false { didSet { if !magnet { cursor.friction = 1 }; defaults.set(magnet, forKey: "magnet") } }
     @Published var dwellMenu = false { didSet { defaults.set(dwellMenu, forKey: "dwellMenu") } }
     @Published var shakeEscape = false { didSet { defaults.set(shakeEscape, forKey: "shakeEscape") } }
     @Published var onboardingDone = false { didSet { defaults.set(onboardingDone, forKey: "onboardingDone") } }
@@ -452,10 +452,18 @@ final class AppModel: ObservableObject {
     // MARK: - Réglages enregistrés
 
     private func loadSettings() {
-        if defaults.integer(forKey: "settingsVersion") < Self.settingsVersion {
+        let version = defaults.integer(forKey: "settingsVersion")
+        if version < 3 {
             for k in ["gain", "click", "flickEnabled", "rightClick", "vAxis"] { defaults.removeObject(forKey: k) }
-            defaults.set(Self.settingsVersion, forKey: "settingsVersion")
         }
+        if version < 4 {
+            // Alignement tête ↔ écran et aimant désormais désactivés par défaut : l'alignement dérive avec le
+            // gyroscope des AirPods (mesuré ~1 400 px/min sur un enregistrement) et tirait le curseur loin de la visée ;
+            // l'aimant freinait la visée sur chaque icône de la barre des menus. Sans eux, le pointage est celui de la
+            // version 2.0 d'origine. Le calibrage haut/bas est conservé.
+            for k in ["alignment", "magnet"] { defaults.removeObject(forKey: k) }
+        }
+        if version < Self.settingsVersion { defaults.set(Self.settingsVersion, forKey: "settingsVersion") }
         func d(_ k: String, _ def: Double) -> Double { defaults.object(forKey: k) != nil ? defaults.double(forKey: k) : def }
         func b(_ k: String, _ def: Bool) -> Bool { defaults.object(forKey: k) != nil ? defaults.bool(forKey: k) : def }
         sensitivity = min(max(d("sensitivity", 1), 0.3), 3)
@@ -465,11 +473,11 @@ final class AppModel: ObservableObject {
         nodClick = b("nodClick", true)
         nodPreset = NodPreset(rawValue: defaults.integer(forKey: "nodPreset")).flatMap { defaults.object(forKey: "nodPreset") != nil ? $0 : nil } ?? .normal
         tiltClick = b("tiltClick", false)
-        alignment = b("alignment", true)
+        alignment = b("alignment", false)
         stemScroll = b("stemScroll", false)
         typingPause = b("typingPause", true)
         toasts = b("toasts", true)
-        magnet = b("magnet", true)
+        magnet = b("magnet", false)
         dwellMenu = b("dwellMenu", false)
         shakeEscape = b("shakeEscape", false)
         scrollStep = [0.125, 0.25, 0.5].contains(d("scrollStep", 0.25)) ? d("scrollStep", 0.25) : 0.25
