@@ -230,5 +230,23 @@ for (name, csv) in [("motion1", m1), ("motion2", m2)] {
     check("shakeNoFalsePositive[\(name)]", replayShakes(csv: csv) == 0, "\(replayShakes(csv: csv)) faux « non »")
 }
 
+// MARK: - État affiché
+
+func status(streaming: Bool = true, sinceStart: Double = 60, paused: Bool = false,
+            calibrating: Bool = false, denied: Bool = false, available: Bool = true) -> AppStatus {
+    AppStatus.resolve(available: available, motionDenied: denied, calibrating: calibrating,
+                      streaming: streaming, sinceStart: sinceStart, paused: paused)
+}
+check("statusActive", status() == .active)
+check("statusNoMotion", status(streaming: false) == .noMotion)
+check("statusSearchingJustStarted", status(streaming: false, sinceStart: 1) == .searching)
+check("statusPaused", status(paused: true) == .paused)
+// Bug du 16/11 : en pause, AirPods silencieux → « Aucun mouvement reçu » cachait la pause pendant des heures
+check("statusPausedWinsOverNoMotion", status(streaming: false, paused: true) == .paused, "\(status(streaming: false, paused: true))")
+check("statusPausedWinsOverSearching", status(streaming: false, sinceStart: 1, paused: true) == .paused)
+check("statusDeniedWinsOverPause", status(paused: true, denied: true) == .motionDenied)
+check("statusUnavailableFirst", status(paused: true, denied: true, available: false) == .unavailable)
+check("statusCalibrating", status(calibrating: true) == .calibrating)
+
 print(failures == 0 ? "\nTout est vert." : "\n\(failures) échec(s).")
 exit(failures == 0 ? 0 : 1)

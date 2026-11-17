@@ -11,7 +11,7 @@ import simd
 final class AppModel: ObservableObject {
     static let shared = AppModel()
 
-    enum Status: Equatable { case searching, active, noMotion, paused, calibrating, motionDenied, unavailable }
+    typealias Status = AppStatus
 
     // MARK: État affiché
     @Published private(set) var status: Status = .searching
@@ -322,13 +322,12 @@ final class AppModel: ObservableObject {
             axTrusted = trusted
             cursor.allowed = trusted
         }
-        let new: Status
-        if !motion.isAvailable { new = .unavailable }
-        else if motionAuth == .denied || motionAuth == .restricted { new = .motionDenied }
-        else if calibSamples != nil { new = .calibrating }
-        else if !motion.isStreaming { new = Date().timeIntervalSince(motion.startedAt) < 3 ? .searching : .noMotion }
-        else if isPaused { new = .paused }
-        else { new = .active }
+        let new = Status.resolve(available: motion.isAvailable,
+                                 motionDenied: motionAuth == .denied || motionAuth == .restricted,
+                                 calibrating: calibSamples != nil,
+                                 streaming: motion.isStreaming,
+                                 sinceStart: Date().timeIntervalSince(motion.startedAt),
+                                 paused: isPaused)
         if new != status {
             if new != .active && new != .paused && cursor.dragging { toggleDrag(); Log.line("Glisser relâché (plus de mouvement)") }
             if status == .active && new == .noMotion { toast(String(localized: "AirPods : plus de mouvement"), "exclamationmark.triangle.fill") }
@@ -343,6 +342,7 @@ final class AppModel: ObservableObject {
 
     func togglePause() {
         isPaused.toggle()
+        Log.line(isPaused ? "Pause" : "Reprise")
         toast(isPaused ? String(localized: "En pause — ⌃⌥P pour reprendre") : String(localized: "Reprise"),
               isPaused ? "pause.circle.fill" : "play.circle.fill")
         if isPaused { if cursor.dragging { toggleDrag() }; exitScrollMode(); if quickMenu != nil { closeQuickMenu() } }
