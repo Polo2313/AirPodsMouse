@@ -32,7 +32,7 @@ final class AppModel: ObservableObject {
 
     // MARK: Réglages
     private let defaults = UserDefaults.standard
-    static let settingsVersion = 4
+    static let settingsVersion = 5
 
     @Published var sensitivity = 1.0 { didSet { engine.sensitivity = sensitivity; defaults.set(sensitivity, forKey: "sensitivity") } }
     @Published var verticalRatio = 2.4 { didSet { engine.verticalRatio = verticalRatio; defaults.set(verticalRatio, forKey: "verticalRatio") } }
@@ -49,7 +49,8 @@ final class AppModel: ObservableObject {
     @Published var scrollStep = 0.25 { didSet { defaults.set(scrollStep, forKey: "scrollStep") } }
     @Published var toasts = true { didSet { defaults.set(toasts, forKey: "toasts") } }
     @Published var typingPause = true { didSet { defaults.set(typingPause, forKey: "typingPause") } }
-    @Published var magnet = false { didSet { if !magnet { cursor.friction = 1 }; defaults.set(magnet, forKey: "magnet") } }
+    @Published var magnet = true { didSet { if !magnet { cursor.magnetSlowdown = 0 }; defaults.set(magnet, forKey: "magnet") } }
+    @Published var magnetStrength: MagnetStrength = .medium { didSet { defaults.set(magnetStrength.rawValue, forKey: "magnetStrength") } }
     @Published var dwellMenu = false { didSet { defaults.set(dwellMenu, forKey: "dwellMenu") } }
     @Published var shakeEscape = false { didSet { defaults.set(shakeEscape, forKey: "shakeEscape") } }
     @Published var onboardingDone = false { didSet { defaults.set(onboardingDone, forKey: "onboardingDone") } }
@@ -214,7 +215,7 @@ final class AppModel: ObservableObject {
         // Aimant : ~10 fois par seconde, ralentir si le curseur survole un élément cliquable
         if magnet && status == .active && Date().timeIntervalSince(lastMagnetCheck) > 0.1 {
             lastMagnetCheck = Date()
-            cursor.friction = ClickableProbe.isClickable(at: cursor.pos) ? 0.5 : 1
+            cursor.magnetSlowdown = ClickableProbe.isClickable(at: cursor.pos) ? magnetStrength.slowdown : 0
         }
 
         // Menu de clic rapide ouvert : viser une action et rester immobile
@@ -400,7 +401,7 @@ final class AppModel: ObservableObject {
     }
 
     func resetSettings() {
-        for k in ["sensitivity", "verticalRatio", "invertX", "invertY", "nodClick", "nodPreset", "tiltClick", "dwellEnabled", "dwellDelay", "vAxis", "alignment", "stemScroll", "scrollStep", "typingPause", "magnet", "dwellMenu", "shakeEscape", "toasts"] {
+        for k in ["sensitivity", "verticalRatio", "invertX", "invertY", "nodClick", "nodPreset", "tiltClick", "dwellEnabled", "dwellDelay", "vAxis", "alignment", "stemScroll", "scrollStep", "typingPause", "magnet", "magnetStrength", "dwellMenu", "shakeEscape", "toasts"] {
             defaults.removeObject(forKey: k)
         }
         loadSettings()
@@ -463,6 +464,10 @@ final class AppModel: ObservableObject {
             // version 2.0 d'origine. Le calibrage haut/bas est conservé.
             for k in ["alignment", "magnet"] { defaults.removeObject(forKey: k) }
         }
+        if version < 5 {
+            // Aimant refait (progressif, réglable, plus fort par défaut) : de nouveau activé
+            defaults.removeObject(forKey: "magnet")
+        }
         if version < Self.settingsVersion { defaults.set(Self.settingsVersion, forKey: "settingsVersion") }
         func d(_ k: String, _ def: Double) -> Double { defaults.object(forKey: k) != nil ? defaults.double(forKey: k) : def }
         func b(_ k: String, _ def: Bool) -> Bool { defaults.object(forKey: k) != nil ? defaults.bool(forKey: k) : def }
@@ -477,7 +482,9 @@ final class AppModel: ObservableObject {
         stemScroll = b("stemScroll", false)
         typingPause = b("typingPause", true)
         toasts = b("toasts", true)
-        magnet = b("magnet", false)
+        magnet = b("magnet", true)
+        magnetStrength = defaults.object(forKey: "magnetStrength") != nil
+            ? MagnetStrength(rawValue: defaults.integer(forKey: "magnetStrength")) ?? .medium : .medium
         dwellMenu = b("dwellMenu", false)
         shakeEscape = b("shakeEscape", false)
         scrollStep = [0.125, 0.25, 0.5].contains(d("scrollStep", 0.25)) ? d("scrollStep", 0.25) : 0.25

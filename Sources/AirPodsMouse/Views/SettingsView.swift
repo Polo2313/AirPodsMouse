@@ -202,8 +202,16 @@ struct PointerPane: View {
 
             Section {
                 Toggle("Aimant : ralentir sur les boutons", isOn: $model.magnet)
+                if model.magnet {
+                    Picker("Force", selection: $model.magnetStrength) {
+                        Text("Léger").tag(MagnetStrength.light)
+                        Text("Moyen").tag(MagnetStrength.medium)
+                        Text("Fort").tag(MagnetStrength.strong)
+                    }
+                    .pickerStyle(.segmented)
+                }
             } footer: {
-                Text("Au-dessus d'un bouton, d'un lien ou d'une case, le curseur ralentit en visée fine : plus facile de s'arrêter dessus.")
+                Text("Au-dessus d'un bouton, d'un lien ou d'une case, le curseur ralentit en visée fine : plus facile de s'arrêter dessus. Un mouvement franc n'est jamais freiné.")
             }
 
             Section("Sens") {

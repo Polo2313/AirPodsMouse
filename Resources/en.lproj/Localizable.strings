@@ -161,7 +161,10 @@
 "Glisser-déposer (attraper / lâcher)" = "Drag and drop (grab / release)";
 "Défiler avec la tête" = "Scroll with your head";
 "Aimant : ralentir sur les boutons" = "Magnet: slow down over buttons";
-"Au-dessus d'un bouton, d'un lien ou d'une case, le curseur ralentit en visée fine : plus facile de s'arrêter dessus." = "Over a button, link or checkbox, the pointer slows down when aiming finely: easier to stop on it.";
+"Au-dessus d'un bouton, d'un lien ou d'une case, le curseur ralentit en visée fine : plus facile de s'arrêter dessus. Un mouvement franc n'est jamais freiné." = "Over a button, link or checkbox, the pointer slows down when aiming finely: easier to stop on it. A deliberate movement is never slowed.";
+"Force" = "Strength";
+"Léger" = "Light";
+"Fort" = "Strong";
 "Ouvrir le menu de clic rapide au lieu de cliquer" = "Open the quick click menu instead of clicking";
 "Secouer la tête « non » = Échap" = "Shake your head “no” = Escape";
 "Pour fermer un menu ou annuler." = "To close a menu or cancel.";

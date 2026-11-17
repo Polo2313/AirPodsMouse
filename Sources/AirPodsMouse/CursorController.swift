@@ -27,12 +27,12 @@ final class CursorController {
         }
     }
 
-    /// Aimant : < 1 quand le curseur survole un élément cliquable (ralentit la visée fine pour s'y arrêter).
-    var friction = 1.0
+    /// Aimant : > 0 quand le curseur survole un élément cliquable (part de vitesse retirée en visée fine).
+    var magnetSlowdown = 0.0
 
     func add(dx: Double, dy: Double) {
-        // Ralentir seulement les petits mouvements (visée fine) : un mouvement franc sort du bouton sans effort
-        let k = hypot(dx, dy) < 8 ? friction : 1
+        // Freinage progressif : fort en visée fine, nul pour un mouvement franc (voir Magnet)
+        let k = magnetSlowdown > 0 ? Magnet.factor(step: hypot(dx, dy), slowdown: magnetSlowdown) : 1
         pending.x += dx * k; pending.y += dy * k
     }
 

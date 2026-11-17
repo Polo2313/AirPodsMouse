@@ -230,6 +230,19 @@ for (name, csv) in [("motion1", m1), ("motion2", m2)] {
     check("shakeNoFalsePositive[\(name)]", replayShakes(csv: csv) == 0, "\(replayShakes(csv: csv)) faux « non »")
 }
 
+// MARK: - Aimant : ralentir sur les boutons
+
+let medium = MagnetStrength.medium.slowdown
+check("magnetSlowsFineAimMoreThanBefore", Magnet.factor(step: 1, slowdown: medium) < 0.5,   // avant : ×0,5
+      "\(Magnet.factor(step: 1, slowdown: medium))")
+check("magnetLeavesFastMovesAlone", Magnet.factor(step: 15, slowdown: MagnetStrength.strong.slowdown) == 1)
+check("magnetOffDoesNothing", Magnet.factor(step: 1, slowdown: 0) == 1)
+let curve = stride(from: 0.0, through: 15, by: 0.25).map { Magnet.factor(step: $0, slowdown: MagnetStrength.strong.slowdown) }
+check("magnetIsProgressive", zip(curve, curve.dropFirst()).allSatisfy { $1 >= $0 && $1 - $0 < 0.06 },
+      "saut max \(zip(curve, curve.dropFirst()).map { $1 - $0 }.max() ?? 0)")
+check("magnetStrengthsOrdered", MagnetStrength.light.slowdown < medium && medium < MagnetStrength.strong.slowdown)
+check("magnetNeverStops", MagnetStrength.allCases.allSatisfy { Magnet.factor(step: 0.5, slowdown: $0.slowdown) >= 0.2 })
+
 // MARK: - État affiché
 
 func status(streaming: Bool = true, sinceStart: Double = 60, paused: Bool = false,
