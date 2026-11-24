@@ -9,6 +9,7 @@ final class CursorOverlay {
     private let size: CGFloat = 64
     private let panel: NSPanel
     private var shown = false
+    private var lastOrigin = NSPoint(x: -9999, y: -9999)
 
     private init() {
         panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: size, height: size),
@@ -26,7 +27,11 @@ final class CursorOverlay {
     func update(visible: Bool) {
         if visible {
             let m = NSEvent.mouseLocation
-            panel.setFrameOrigin(NSPoint(x: m.x - size / 2, y: m.y - size / 2))
+            let origin = NSPoint(x: (m.x - size / 2).rounded(), y: (m.y - size / 2).rounded())
+            if hypot(origin.x - lastOrigin.x, origin.y - lastOrigin.y) >= 0.5 {
+                panel.setFrameOrigin(origin)
+                lastOrigin = origin
+            }
             if !shown { panel.orderFrontRegardless(); shown = true }
         } else if shown {
             panel.orderOut(nil); shown = false
@@ -36,7 +41,7 @@ final class CursorOverlay {
 
 struct CursorRing: View {
     @EnvironmentObject var model: AppModel
-    @State private var pulse = false
+    @State private var pulse = true
 
     var body: some View {
         ZStack {

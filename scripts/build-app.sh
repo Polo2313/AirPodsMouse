@@ -55,7 +55,7 @@ else
 fi
 
 if [[ -z "${NO_INSTALL:-}" ]]; then
-  pkill -f "/Applications/$APP/Contents/MacOS/AirPodsMouse" 2>/dev/null || true
+  pkill -f "$APP/Contents/MacOS/AirPodsMouse" 2>/dev/null || true
   rm -rf /Applications/$APP
   cp -R $APP /Applications/
   echo "OK → installée dans /Applications"

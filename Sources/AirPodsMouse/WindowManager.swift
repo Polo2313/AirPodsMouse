@@ -21,9 +21,13 @@ final class WindowManager: NSObject, NSWindowDelegate {
         }
     }
 
-    func closeOnboarding() { windows["onboarding"]?.close() }
+    func closeOnboarding() {
+        windows["onboarding"]?.close()
+        windows.removeValue(forKey: "onboarding")
+    }
 
     func showViewer() {
+        viewer.window.delegate = self
         AppModel.shared.onSample = { [weak self] m in self?.viewer.update(motion: m, engine: AppModel.shared.engine) }
         viewer.show()
         NSApp.setActivationPolicy(.regular)
@@ -59,6 +63,10 @@ final class WindowManager: NSObject, NSWindowDelegate {
     nonisolated func windowWillClose(_ notification: Notification) {
         DispatchQueue.main.async {
             MainActor.assumeIsolated {
+                if !self.viewer.isVisible { AppModel.shared.onSample = nil }
+                if let w = notification.object as? NSWindow, w === self.windows["onboarding"] {
+                    self.windows.removeValue(forKey: "onboarding")
+                }
                 let open = NSApp.windows.contains { $0.isVisible && $0.styleMask.contains(.titled) }
                 if !open { NSApp.setActivationPolicy(.accessory) }
             }

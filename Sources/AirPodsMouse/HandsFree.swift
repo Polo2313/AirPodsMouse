@@ -17,6 +17,7 @@ enum ClickableProbe {
     ]
     private static let queue = DispatchQueue(label: "local.airpodsmouse.ax-probe", qos: .userInteractive)
     private static let inFlight = OSAllocatedUnfairLock(initialState: false)
+    private static let lastWebAXPid = OSAllocatedUnfairLock<pid_t>(initialState: 0)
 
     /// - Parameter p: position en coordonnées écran (origine en haut à gauche).
     static func isClickable(at p: CGPoint) -> Bool {
@@ -35,13 +36,19 @@ enum ClickableProbe {
     }
 
     /// Active l'arbre d'accessibilité DOM dans les navigateurs Chromium/Electron (Chrome, Brave, Arc…)
-    /// pour que les barres de recherche web soient visibles par macOS.
+    /// une seule fois par processus au premier plan, sans activer le mode lecteur d'écran VoiceOver.
     static func enableWebAccessibilityOnFrontmostApp() {
         guard let front = NSWorkspace.shared.frontmostApplication else { return }
-        let app = AXUIElementCreateApplication(front.processIdentifier)
+        let pid = front.processIdentifier
+        let shouldEnable = lastWebAXPid.withLock { last -> Bool in
+            if last == pid { return false }
+            last = pid
+            return true
+        }
+        guard shouldEnable else { return }
+        let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.05)
         AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
-        AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
     }
 
     /// Détecte si le point `p` correspond réellement à une barre de recherche (ou un champ de saisie court)
@@ -49,20 +56,42 @@ enum ClickableProbe {
     /// Ne renvoie jamais `true` sur un éditeur de code, un document entier ou un élément hors du curseur.
     static func detectSearchBar(at p: CGPoint) -> (rect: CGRect, summary: String)? {
         if let front = NSWorkspace.shared.frontmostApplication {
+            enableWebAccessibilityOnFrontmostApp()
             let app = AXUIElementCreateApplication(front.processIdentifier)
             AXUIElementSetMessagingTimeout(app, 0.06)
-            AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
-            AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
 
             // 1. Élément directement sous le curseur au point cliqué
             var el: AXUIElement?
             if AXUIElementCopyElementAtPosition(system, Float(p.x), Float(p.y), &el) == .success, let hit = el {
                 if let match = matchSearchBarHierarchy(startingAt: hit, point: p, isFocused: false) { return match }
+                if let childMatch = matchSearchBarChildren(of: hit, point: p) { return childMatch }
             }
 
             // 2. Élément nouvellement focalisé (via l'appli ou le système), UNIQUEMENT s'il est situé à l'endroit du clic
             for candidate in [focusedElement(in: app), focusedElement(in: system)].compactMap({ $0 }) {
                 if let match = matchSearchBarHierarchy(startingAt: candidate, point: p, isFocused: true) { return match }
+            }
+        }
+        return nil
+    }
+
+    /// Si l'utilisateur clique sur le conteneur `AXGroup` d'une barre de recherche (ex. à côté du texte),
+    /// inspecte ses enfants directs pour trouver le champ `<input>` (`AXTextField` / `AXSearchField`).
+    private static func matchSearchBarChildren(of group: AXUIElement, point p: CGPoint) -> (rect: CGRect, summary: String)? {
+        guard let r = elementFrame(group), r.height >= 14, r.height <= 88,
+              r.insetBy(dx: -16, dy: -16).contains(p) else { return nil }
+        var childrenRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(group, kAXChildrenAttribute as CFString, &childrenRef) == .success,
+              let children = childrenRef as? [AXUIElement] else { return nil }
+        for child in children.prefix(8) {
+            let role = stringAttr(child, kAXRoleAttribute) ?? ""
+            let subrole = stringAttr(child, kAXSubroleAttribute) ?? ""
+            let cr = elementFrame(child) ?? r
+            let hints = textMetadata(of: child) + " " + textMetadata(of: group)
+            if SearchBarClassifier.matches(role: role, subrole: subrole, hints: hints, rect: cr,
+                                           clickedAt: p, isFocusedElement: true) {
+                let summary = "\(role)\(subrole.isEmpty ? "" : "/\(subrole)") (\(Int(cr.width))×\(Int(cr.height)))"
+                return (r, summary)
             }
         }
         return nil

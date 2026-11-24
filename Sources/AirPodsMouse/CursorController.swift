@@ -158,6 +158,20 @@ final class CursorController {
         }
     }
 
+    /// Double-clic gauche immédiat à la position courante (utilisé par le menu de clic rapide).
+    func doubleClick() {
+        guard allowed else { return }
+        let p = CGPoint(x: pos.x.rounded(), y: pos.y.rounded())
+        lastClick = Date(); lastClickRight = false; lastClickPos = p; clickCount = 2
+        for state: Int64 in [1, 2] {
+            for type: CGEventType in [.leftMouseDown, .leftMouseUp] {
+                let e = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: p, mouseButton: .left)
+                e?.setIntegerValueField(.mouseEventClickState, value: state)
+                e?.post(tap: .cghidEventTap)
+            }
+        }
+    }
+
     // MARK: - Écrans
 
     /// Curseur (y compris le mouvement pas encore appliqué) et écran qui le contient, pour l'alignement tête ↔ écran.

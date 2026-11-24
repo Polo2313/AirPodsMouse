@@ -278,9 +278,14 @@ final class AppModel: ObservableObject {
     // MARK: - Menu de clic rapide
 
     private func openQuickMenu(at p: CGPoint, t: Double) {
-        quickMenu = DwellMenu(origin: p, openedAt: t)
+        let b = cursor.screenContext.bounds
+        let margin: CGFloat = 140
+        let clamped = CGPoint(x: min(max(p.x, b.minX + margin), b.maxX - margin),
+                              y: min(max(p.y, b.minY + margin), b.maxY - margin))
+        if clamped != p { cursor.moveTo(clamped) }
+        quickMenu = DwellMenu(origin: clamped, openedAt: t)
         quickMenuHovered = nil; quickMenuProgress = 0; dwellProgress = 0
-        QuickMenuOverlay.shared.show(at: p)
+        QuickMenuOverlay.shared.show(at: clamped)
         Log.line("Menu de clic ouvert")
     }
 
@@ -295,10 +300,9 @@ final class AppModel: ObservableObject {
         switch a {
         case .click: click(right: false, source: "menu")
         case .doubleClick:
-            click(right: false, source: "menu")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
-                MainActor.assumeIsolated { self?.click(right: false, source: "menu, double") }
-            }
+            cursor.doubleClick()
+            lastClickAt = Date()
+            Log.line("Double-clic (menu) en \(Int(cursor.pos.x)),\(Int(cursor.pos.y))")
         case .rightClick: click(right: true, source: "menu")
         case .drag: toggleDrag()
         case .scroll: toggleScrollMode()
@@ -388,7 +392,7 @@ final class AppModel: ObservableObject {
                                  motionDenied: motionAuth == .denied || motionAuth == .restricted,
                                  calibrating: calibSamples != nil,
                                  streaming: motion.isStreaming,
-                                 sinceStart: Date().timeIntervalSince(motion.startedAt),
+                                 sinceStart: motion.secondsSinceInitialStart,
                                  paused: isPaused)
         if new != status {
             if new != .active && new != .paused && cursor.dragging { toggleDrag(); Log.line("Glisser relâché (plus de mouvement)") }

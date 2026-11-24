@@ -12,6 +12,7 @@ final class MotionService: NSObject, CMHeadphoneMotionManagerDelegate {
     var onConnectionChange: ((Bool) -> Void)?
 
     private(set) var startedAt = Date.distantPast
+    private(set) var firstStartedAt = Date.distantPast
     private(set) var lastSampleAt: Date?
     private(set) var connected = false
     private var lastAuth: CMAuthorizationStatus?
@@ -21,14 +22,21 @@ final class MotionService: NSObject, CMHeadphoneMotionManagerDelegate {
     /// Reçoit des mesures récentes (< 2 s).
     var isStreaming: Bool { lastSampleAt.map { Date().timeIntervalSince($0) < 2 } ?? false }
 
-    func start() {
+    /// Secondes écoulées depuis le premier démarrage (évite de repasser l'état en « Recherche… » toutes les 45 s).
+    var secondsSinceInitialStart: TimeInterval {
+        firstStartedAt == .distantPast ? 0 : Date().timeIntervalSince(firstStartedAt)
+    }
+
+    func start(resetInitialClock: Bool = true) {
         guard manager.isDeviceMotionAvailable else { return }
         let auth = Permissions.motion
         lastAuth = auth
         guard auth != .denied && auth != .restricted else { return }
         manager.delegate = self
         manager.stopDeviceMotionUpdates()
-        startedAt = Date()
+        let now = Date()
+        startedAt = now
+        if resetInitialClock || firstStartedAt == .distantPast { firstStartedAt = now }
         manager.startDeviceMotionUpdates(to: .main) { [weak self] m, err in
             if let err { Log.line("Erreur capteurs : \(err.localizedDescription)"); return }
             guard let m else { return }
@@ -45,11 +53,15 @@ final class MotionService: NSObject, CMHeadphoneMotionManagerDelegate {
         if auth != lastAuth {
             Log.line("Autorisation Mouvements : \(auth.rawValue)")
             lastAuth = auth
-            if auth == .authorized { start() }   // des mises à jour lancées avant l'accord restent muettes
+            if auth == .authorized { start(resetInitialClock: true) }   // des mises à jour lancées avant l'accord restent muettes
         }
         guard !paused else { return }
         let silentFor = Date().timeIntervalSince(lastSampleAt ?? startedAt)
-        if silentFor > 45, Date().timeIntervalSince(startedAt) > 45, auth == .authorized { start() }
+        // Ne relance en silence que si des AirPods sont effectivement connectés au Mac
+        if silentFor > 45, Date().timeIntervalSince(startedAt) > 45, auth == .authorized,
+           (connected || AudioOutput.airPods() != nil) {
+            start(resetInitialClock: false)
+        }
     }
 
     nonisolated func headphoneMotionManagerDidConnect(_ manager: CMHeadphoneMotionManager) {

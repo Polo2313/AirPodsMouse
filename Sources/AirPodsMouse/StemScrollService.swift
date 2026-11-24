@@ -13,6 +13,7 @@ final class StemScrollService {
     private var lastVolumeKeyAt = Date.distantPast
     private var keyMonitor: Any?
     private var outputListener: AudioObjectPropertyListenerBlock?
+    private var isRestoring = false
     private(set) var enabled = false
 
     func setEnabled(_ on: Bool) {
@@ -79,13 +80,15 @@ final class StemScrollService {
     }
 
     private func volumeChanged(element: UInt32) {
-        guard let d = device, var det = detector, let v = Self.volume(d, element) else { return }
+        guard !isRestoring, let d = device, var det = detector, let v = Self.volume(d, element) else { return }
         let key = Date().timeIntervalSince(lastVolumeKeyAt) < 0.4
         let swipe = det.volumeChanged(to: v, at: ProcessInfo.processInfo.systemUptime, keyPressedRecently: key)
         detector = det
         guard let swipe else { return }
         // Remet le volume où il était (le glissement ne doit pas changer le son)
+        isRestoring = true
         for (el, _) in listeners { Self.setVolume(d, el, det.reference) }
+        isRestoring = false
         onSwipe?(swipe)
     }
 
