@@ -64,7 +64,7 @@ final class WindowManager: NSObject, NSWindowDelegate {
         DispatchQueue.main.async {
             MainActor.assumeIsolated {
                 if !self.viewer.isVisible { AppModel.shared.onSample = nil }
-                if let w = notification.object as? NSWindow, w === self.windows["onboarding"] {
+                if let ob = self.windows["onboarding"], !ob.isVisible {
                     self.windows.removeValue(forKey: "onboarding")
                 }
                 let open = NSApp.windows.contains { $0.isVisible && $0.styleMask.contains(.titled) }
