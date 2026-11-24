@@ -175,6 +175,17 @@
 "Glisser" = "Drag";
 "Défiler" = "Scroll";
 "« Clavier visuel » ouvre le réglage de macOS : active « Clavier d'accessibilité ». « Dictée » démarre la dictée dans l'appli au premier plan." = "“On-screen keyboard” opens the macOS setting: turn on “Accessibility Keyboard”. “Dictation” starts dictation in the frontmost app.";
+"Parler automatiquement au clic dans une barre de recherche" = "Speak automatically when clicking a search bar";
+"Action vocale" = "Voice action";
+"Dicter avec Librewispr" = "Dictate with Librewispr";
+"Ouvrir Librewispr" = "Open Librewispr";
+"Dictée de macOS" = "macOS Dictation";
+"Parler maintenant" = "Speak now";
+"Parler au clic dans une recherche" = "Speak when clicking a search bar";
+"Quand tu cliques dans une barre de recherche ou une zone de texte, AirPodsMouse lance automatiquement Librewispr (ou l'outil choisi) pour que tu puisses parler tout de suite." = "When you click a search bar or text box, AirPodsMouse automatically starts Librewispr (or your chosen tool) so you can speak right away.";
+"Parle maintenant (Librewispr)" = "Speak now (Librewispr)";
+"Librewispr ouvert" = "Librewispr opened";
+"Dictée activée" = "Dictation started";
 
 /* Bulles */
 "Afficher des messages près du curseur" = "Show messages near the pointer";

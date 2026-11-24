@@ -53,6 +53,8 @@ final class AppModel: ObservableObject {
     @Published var magnetStrength: MagnetStrength = .medium { didSet { defaults.set(magnetStrength.rawValue, forKey: "magnetStrength") } }
     @Published var dwellMenu = false { didSet { defaults.set(dwellMenu, forKey: "dwellMenu") } }
     @Published var shakeEscape = false { didSet { defaults.set(shakeEscape, forKey: "shakeEscape") } }
+    @Published var autoVoiceOnTextClick = true { didSet { defaults.set(autoVoiceOnTextClick, forKey: "autoVoiceOnTextClick") } }
+    @Published var voiceInputMode: VoiceInputMode = .librewispr { didSet { defaults.set(voiceInputMode.rawValue, forKey: "voiceInputMode") } }
     @Published var onboardingDone = false { didSet { defaults.set(onboardingDone, forKey: "onboardingDone") } }
     @Published private(set) var isCalibrated = false
 
@@ -328,11 +330,24 @@ final class AppModel: ObservableObject {
         toast(String(localized: "Fin du défilement"), "checkmark.circle.fill")
     }
 
+    func startVoiceInput() {
+        let msg = HandsFree.triggerVoiceInput(mode: voiceInputMode)
+        toast(msg, "mic.fill")
+    }
+
     private func click(right: Bool, source: String) {
         if cursor.dragging && !right { toggleDrag(); return }   // pendant un glisser, « cliquer » lâche
         cursor.click(right: right)
         lastClickAt = Date()
-        Log.line("Clic \(right ? "droit" : "gauche") (\(source)) en \(Int(cursor.pos.x)),\(Int(cursor.pos.y))")
+        let clickedPos = cursor.pos
+        Log.line("Clic \(right ? "droit" : "gauche") (\(source)) en \(Int(clickedPos.x)),\(Int(clickedPos.y))")
+        if !right, autoVoiceOnTextClick {
+            ClickableProbe.probeTextInputAsync(at: clickedPos) { [weak self] isText in
+                guard let self, self.autoVoiceOnTextClick, !self.isPaused, isText else { return }
+                Log.line("Champ de recherche/texte détecté → lancement vocal")
+                self.startVoiceInput()
+            }
+        }
     }
 
     private func healthCheck() {
@@ -425,7 +440,7 @@ final class AppModel: ObservableObject {
     }
 
     func resetSettings() {
-        for k in ["sensitivity", "verticalRatio", "invertX", "invertY", "nodClick", "nodPreset", "tiltClick", "dwellEnabled", "dwellDelay", "vAxis", "alignment", "stemScroll", "scrollStep", "typingPause", "magnet", "magnetStrength", "dwellMenu", "shakeEscape", "toasts"] {
+        for k in ["sensitivity", "verticalRatio", "invertX", "invertY", "nodClick", "nodPreset", "tiltClick", "dwellEnabled", "dwellDelay", "vAxis", "alignment", "stemScroll", "scrollStep", "typingPause", "magnet", "magnetStrength", "dwellMenu", "shakeEscape", "autoVoiceOnTextClick", "voiceInputMode", "toasts"] {
             defaults.removeObject(forKey: k)
         }
         loadSettings()
@@ -511,6 +526,9 @@ final class AppModel: ObservableObject {
             ? MagnetStrength(rawValue: defaults.integer(forKey: "magnetStrength")) ?? .medium : .medium
         dwellMenu = b("dwellMenu", false)
         shakeEscape = b("shakeEscape", false)
+        autoVoiceOnTextClick = b("autoVoiceOnTextClick", true)
+        voiceInputMode = defaults.object(forKey: "voiceInputMode") != nil
+            ? VoiceInputMode(rawValue: defaults.integer(forKey: "voiceInputMode")) ?? .librewispr : .librewispr
         scrollStep = [0.125, 0.25, 0.5].contains(d("scrollStep", 0.25)) ? d("scrollStep", 0.25) : 0.25
         dwellEnabled = b("dwellEnabled", false)
         dwellDelay = min(max(d("dwellDelay", 1), 0.6), 2)

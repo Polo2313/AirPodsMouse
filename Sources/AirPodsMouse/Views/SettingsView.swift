@@ -122,14 +122,24 @@ struct GeneralPane: View {
             }
 
             Section {
+                Toggle("Parler automatiquement au clic dans une barre de recherche", isOn: $model.autoVoiceOnTextClick)
+                if model.autoVoiceOnTextClick {
+                    Picker("Action vocale", selection: $model.voiceInputMode) {
+                        Text("Dicter avec Librewispr").tag(VoiceInputMode.librewispr)
+                        Text("Ouvrir Librewispr").tag(VoiceInputMode.openLibrewispr)
+                        Text("Dictée de macOS").tag(VoiceInputMode.macosDictation)
+                        Text("Clavier visuel").tag(VoiceInputMode.onScreenKeyboard)
+                    }
+                }
                 HStack {
+                    Button { model.startVoiceInput() } label: { Label("Parler maintenant", systemImage: "mic.fill") }
                     Button { HandsFree.showKeyboard() } label: { Label("Clavier visuel", systemImage: "keyboard") }
                     Button { HandsFree.startDictation() } label: { Label("Dictée", systemImage: "mic") }
                 }
             } header: {
                 Text("Écrire sans les mains")
             } footer: {
-                Text("« Clavier visuel » ouvre le réglage de macOS : active « Clavier d'accessibilité ». « Dictée » démarre la dictée dans l'appli au premier plan.")
+                Text("Quand tu cliques dans une barre de recherche ou une zone de texte, AirPodsMouse lance automatiquement Librewispr (ou l'outil choisi) pour que tu puisses parler tout de suite.")
             }
 
             Section("Démarrage") {

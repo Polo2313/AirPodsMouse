@@ -20,6 +20,8 @@ struct MenuBarContent: View {
         Divider()
         Button(model.isDragging ? LocalizedStringKey("Lâcher") : LocalizedStringKey("Glisser-déposer")) { model.toggleDrag() }
         Button(model.scrollMode ? LocalizedStringKey("Arrêter de défiler") : LocalizedStringKey("Défiler avec la tête")) { model.toggleScrollMode() }
+        Toggle("Parler au clic dans une recherche", isOn: $model.autoVoiceOnTextClick)
+        Button("Parler maintenant") { model.startVoiceInput() }
         Button("Clavier visuel") { HandsFree.showKeyboard() }
         Button("Dictée") { HandsFree.startDictation() }
         Divider()

@@ -1,8 +1,9 @@
 import AppKit
+import AirPodsMouseCore
 import ApplicationServices
 import os
 
-/// Aimant : savoir si le curseur survole un élément cliquable, grâce à l'Accessibilité de macOS.
+/// Aimant & détection de champs de saisie grâce à l'Accessibilité de macOS.
 enum ClickableProbe {
     private static let system: AXUIElement = {
         let s = AXUIElementCreateSystemWide()
@@ -13,6 +14,9 @@ enum ClickableProbe {
         kAXButtonRole, "AXLink", kAXCheckBoxRole, kAXRadioButtonRole, kAXPopUpButtonRole, kAXMenuItemRole,
         kAXMenuBarItemRole, kAXMenuButtonRole, kAXDisclosureTriangleRole, kAXTabGroupRole, kAXIncrementorRole,
         kAXComboBoxRole, kAXTextFieldRole, kAXCellRole, "AXSegment", "AXDockItem",
+    ]
+    private static let textRoles: Set<String> = [
+        kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole, "AXSearchField",
     ]
     private static let queue = DispatchQueue(label: "local.airpodsmouse.ax-probe", qos: .userInteractive)
     private static let inFlight = OSAllocatedUnfairLock(initialState: false)
@@ -31,6 +35,55 @@ enum ClickableProbe {
             e = pe as! AXUIElement
         }
         return false
+    }
+
+    /// Vrai si le point cliqué (ou l'élément qui vient de recevoir le focus) est une barre de recherche ou un champ de texte.
+    static func isTextInput(at p: CGPoint) -> Bool {
+        var el: AXUIElement?
+        if AXUIElementCopyElementAtPosition(system, Float(p.x), Float(p.y), &el) == .success, let hit = el {
+            if elementIsTextInput(hit) { return true }
+        }
+        if let front = NSWorkspace.shared.frontmostApplication {
+            let app = AXUIElementCreateApplication(front.processIdentifier)
+            AXUIElementSetMessagingTimeout(app, 0.05)
+            var focused: CFTypeRef?
+            if AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+               let f = focused, CFGetTypeID(f) == AXUIElementGetTypeID() {
+                if elementIsTextInput(f as! AXUIElement) { return true }
+            }
+        }
+        return false
+    }
+
+    private static func elementIsTextInput(_ start: AXUIElement) -> Bool {
+        var e = start
+        for _ in 0..<4 {
+            var role: CFTypeRef?
+            if AXUIElementCopyAttributeValue(e, kAXRoleAttribute as CFString, &role) == .success,
+               let r = role as? String, textRoles.contains(r) { return true }
+            var subrole: CFTypeRef?
+            if AXUIElementCopyAttributeValue(e, kAXSubroleAttribute as CFString, &subrole) == .success,
+               let sr = subrole as? String, sr == "AXSearchField" { return true }
+            var editable: CFTypeRef?
+            if AXUIElementCopyAttributeValue(e, "AXEditable" as CFString, &editable) == .success,
+               let ed = editable as? Bool, ed { return true }
+            var parent: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(e, kAXParentAttribute as CFString, &parent) == .success,
+                  let pe = parent, CFGetTypeID(pe) == AXUIElementGetTypeID() else { return false }
+            e = pe as! AXUIElement
+        }
+        return false
+    }
+
+    /// Vérifie hors du thread principal (après un court délai pour laisser le clic donner le focus au champ)
+    /// si l'utilisateur vient de cliquer dans une barre de recherche ou une zone de texte.
+    static func probeTextInputAsync(at p: CGPoint, after delay: TimeInterval = 0.14, completion: @escaping @MainActor (Bool) -> Void) {
+        queue.asyncAfter(deadline: .now() + delay) {
+            let hit = isTextInput(at: p)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { completion(hit) }
+            }
+        }
     }
 
     /// Version non bloquante pour la boucle à 120 Hz : interroge l'Accessibilité hors du thread principal
@@ -52,8 +105,103 @@ enum ClickableProbe {
     }
 }
 
-/// Écrire sans les mains : clavier d'accessibilité et dictée de macOS.
+/// Écrire sans les mains : Librewispr, dictée de macOS et clavier d'accessibilité.
 enum HandsFree {
+    static let librewisprBundleID = "com.librewispr"
+    static let librewisprAppURL = URL(fileURLWithPath: "/Applications/Librewispr.app")
+
+    static var isLibrewisprInstalled: Bool {
+        FileManager.default.fileExists(atPath: librewisprAppURL.path)
+            || NSWorkspace.shared.urlForApplication(withBundleIdentifier: librewisprBundleID) != nil
+    }
+
+    /// Lit le raccourci actuel de Librewispr dans ses préférences (`Super+P` → `⌘P` par défaut).
+    static func currentLibrewisprShortcut() -> LibrewisprShortcut {
+        let url = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/com.librewispr/settings.json")
+        if let data = try? Data(contentsOf: url), let parsed = LibrewisprShortcut.fromSettingsJSON(data) {
+            return parsed
+        }
+        return .defaultShortcut
+    }
+
+    /// Déclenche l'écoute vocale dans Librewispr en envoyant son raccourci global (et lance l'appli si nécessaire).
+    @discardableResult
+    static func triggerLibrewispr() -> Bool {
+        let shortcut = currentLibrewisprShortcut()
+        let running = !NSRunningApplication.runningApplications(withBundleIdentifier: librewisprBundleID).isEmpty
+        if running {
+            postShortcut(shortcut)
+            Log.line("Librewispr déclenché (\(shortcut.label))")
+            return true
+        }
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: librewisprBundleID)
+                ?? (FileManager.default.fileExists(atPath: librewisprAppURL.path) ? librewisprAppURL : nil) else {
+            Log.line("Librewispr introuvable : repli sur la dictée de macOS")
+            return startDictation()
+        }
+        let cfg = NSWorkspace.OpenConfiguration()
+        cfg.activates = false
+        NSWorkspace.shared.openApplication(at: url, configuration: cfg) { _, err in
+            if let err {
+                Log.line("Impossible de lancer Librewispr : \(err.localizedDescription)")
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+                postShortcut(shortcut)
+                Log.line("Librewispr lancé et déclenché (\(shortcut.label))")
+            }
+        }
+        return true
+    }
+
+    /// Ouvre ou affiche la fenêtre de Librewispr.
+    @discardableResult
+    static func openLibrewisprApp() -> Bool {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: librewisprBundleID)
+                ?? (FileManager.default.fileExists(atPath: librewisprAppURL.path) ? librewisprAppURL : nil) else {
+            Log.line("Librewispr introuvable")
+            return false
+        }
+        NSWorkspace.shared.open(url)
+        Log.line("Application Librewispr ouverte")
+        return true
+    }
+
+    private static func postShortcut(_ s: LibrewisprShortcut) {
+        let src = CGEventSource(stateID: .hidSystemState)
+        var flags: CGEventFlags = []
+        if s.command { flags.insert(.maskCommand) }
+        if s.option { flags.insert(.maskAlternate) }
+        if s.control { flags.insert(.maskControl) }
+        if s.shift { flags.insert(.maskShift) }
+        for down in [true, false] {
+            let e = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(s.keyCode), keyDown: down)
+            e?.flags = flags
+            e?.post(tap: .cghidEventTap)
+        }
+    }
+
+    /// Exécute l'action vocale choisie et renvoie le texte de la bulle de confirmation.
+    @MainActor
+    @discardableResult
+    static func triggerVoiceInput(mode: VoiceInputMode) -> String {
+        switch mode {
+        case .librewispr:
+            triggerLibrewispr()
+            return String(localized: "Parle maintenant (Librewispr)")
+        case .openLibrewispr:
+            openLibrewisprApp()
+            return String(localized: "Librewispr ouvert")
+        case .macosDictation:
+            startDictation()
+            return String(localized: "Dictée activée")
+        case .onScreenKeyboard:
+            showKeyboard()
+            return String(localized: "Clavier visuel")
+        }
+    }
+
     /// Clavier visuel de macOS (clavier d'accessibilité). macOS refuse qu'une appli le lance directement
     /// (essai réel : « Impossible de lancer Assistive Control ») : on ouvre le réglage où on l'active d'un interrupteur.
     static func showKeyboard() {

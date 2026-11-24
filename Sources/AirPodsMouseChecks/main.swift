@@ -264,5 +264,15 @@ check("statusDeniedWinsOverPause", status(paused: true, denied: true) == .motion
 check("statusUnavailableFirst", status(paused: true, denied: true, available: false) == .unavailable)
 check("statusCalibrating", status(calibrating: true) == .calibrating)
 
+// MARK: - Saisie vocale & raccourci Librewispr
+
+check("librewisprShortcutSuperP", LibrewisprShortcut.parse("Super+P") == LibrewisprShortcut(keyCode: 35, command: true, label: "⌘P"))
+check("librewisprShortcutAltSpace", LibrewisprShortcut.parse("Alt+Space") == LibrewisprShortcut(keyCode: 49, option: true, label: "⌥Space"))
+check("librewisprShortcutCtrlShiftD", LibrewisprShortcut.parse("Ctrl+Shift+D") == LibrewisprShortcut(keyCode: 2, control: true, shift: true, label: "⌃⇧D"))
+check("librewisprShortcutInvalid", LibrewisprShortcut.parse("") == nil && LibrewisprShortcut.parse("Super+UnknownKey") == nil)
+let sampleSettings = Data(#"{"onboarding_complete":true,"app_settings":{"shortcut":"Super+P","auto_paste":true}}"#.utf8)
+check("librewisprShortcutFromJSON", LibrewisprShortcut.fromSettingsJSON(sampleSettings) == .defaultShortcut)
+check("voiceInputModesComplete", VoiceInputMode.allCases.count == 4 && VoiceInputMode(rawValue: 0) == .librewispr)
+
 print(failures == 0 ? "\nTout est vert." : "\n\(failures) échec(s).")
 exit(failures == 0 ? 0 : 1)

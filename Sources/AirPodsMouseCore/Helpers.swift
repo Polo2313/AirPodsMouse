@@ -125,3 +125,84 @@ public struct ShakeDetector {
         return false
     }
 }
+
+// MARK: - Saisie vocale au clic dans un champ de recherche / texte
+
+/// Action lancée automatiquement quand on clique dans une barre de recherche ou un champ de texte.
+public enum VoiceInputMode: Int, CaseIterable, Sendable {
+    case librewispr = 0
+    case openLibrewispr = 1
+    case macosDictation = 2
+    case onScreenKeyboard = 3
+}
+
+/// Raccourci global configuré dans Librewispr (`~/Library/Application Support/com.librewispr/settings.json`).
+public struct LibrewisprShortcut: Equatable, Sendable {
+    public let keyCode: UInt16
+    public let command: Bool
+    public let option: Bool
+    public let control: Bool
+    public let shift: Bool
+    public let label: String
+
+    public init(keyCode: UInt16, command: Bool = false, option: Bool = false, control: Bool = false, shift: Bool = false, label: String) {
+        self.keyCode = keyCode
+        self.command = command
+        self.option = option
+        self.control = control
+        self.shift = shift
+        self.label = label
+    }
+
+    public static let defaultShortcut = LibrewisprShortcut(keyCode: 35, command: true, label: "⌘P")
+
+    private static let keyCodes: [String: (code: UInt16, label: String)] = [
+        "a": (0, "A"), "s": (1, "S"), "d": (2, "D"), "f": (3, "F"), "h": (4, "H"), "g": (5, "G"),
+        "z": (6, "Z"), "x": (7, "X"), "c": (8, "C"), "v": (9, "V"), "b": (11, "B"), "q": (12, "Q"),
+        "w": (13, "W"), "e": (14, "E"), "r": (15, "R"), "y": (16, "Y"), "t": (17, "T"),
+        "1": (18, "1"), "2": (19, "2"), "3": (20, "3"), "4": (21, "4"), "6": (22, "6"), "5": (23, "5"),
+        "9": (25, "9"), "7": (26, "7"), "8": (28, "8"), "0": (29, "0"),
+        "o": (31, "O"), "u": (32, "U"), "i": (34, "I"), "p": (35, "P"), "l": (37, "L"), "j": (38, "J"),
+        "k": (40, "K"), "n": (45, "N"), "m": (46, "M"),
+        "space": (49, "Space"), "tab": (48, "Tab"), "enter": (36, "↩"), "return": (36, "↩"),
+        "escape": (53, "Esc"), "esc": (53, "Esc"),
+        "f1": (122, "F1"), "f2": (120, "F2"), "f3": (99, "F3"), "f4": (118, "F4"),
+        "f5": (96, "F5"), "f6": (97, "F6"), "f7": (98, "F7"), "f8": (100, "F8"),
+        "f9": (101, "F9"), "f10": (109, "F10"), "f11": (103, "F11"), "f12": (111, "F12"),
+    ]
+
+    /// Décode une chaîne de raccourci Tauri/Librewispr comme `"Super+P"` ou `"Alt+Space"`.
+    public static func parse(_ raw: String) -> LibrewisprShortcut? {
+        let parts = raw.split(separator: "+").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        guard !parts.isEmpty else { return nil }
+        var cmd = false, opt = false, ctrl = false, shift = false
+        var mainKey: (code: UInt16, label: String)?
+        for part in parts {
+            switch part.lowercased() {
+            case "super", "cmd", "command", "meta", "cmdorctrl", "commandorcontrol": cmd = true
+            case "alt", "option", "opt": opt = true
+            case "ctrl", "control": ctrl = true
+            case "shift": shift = true
+            default:
+                guard mainKey == nil, let k = keyCodes[part.lowercased()] else { return nil }
+                mainKey = k
+            }
+        }
+        guard let key = mainKey else { return nil }
+        var lbl = ""
+        if ctrl { lbl += "⌃" }
+        if opt { lbl += "⌥" }
+        if shift { lbl += "⇧" }
+        if cmd { lbl += "⌘" }
+        lbl += key.label
+        return LibrewisprShortcut(keyCode: key.code, command: cmd, option: opt, control: ctrl, shift: shift, label: lbl)
+    }
+
+    /// Lit `app_settings.shortcut` depuis les données JSON de `settings.json` de Librewispr.
+    public static func fromSettingsJSON(_ data: Data) -> LibrewisprShortcut? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let appSettings = root["app_settings"] as? [String: Any],
+              let raw = appSettings["shortcut"] as? String else { return nil }
+        return parse(raw)
+    }
+}
