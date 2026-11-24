@@ -18,6 +18,10 @@ public struct DwellClicker {
 
     public mutating func reset() { count = 0; lastFire = nil }
 
+    /// Désarme le clic automatique à la position `p` : aucun clic tant que le curseur ne s'est pas déplacé
+    /// d'au moins `rearmDistance` (évite un clic surprise 1 s après le démarrage, la reprise ou un recentrage).
+    public mutating func disarm(at p: CGPoint) { count = 0; lastFire = p }
+
     /// - Returns: `progress` 0…1 (pour l'anneau autour du curseur) et `fire` au moment du clic.
     public mutating func update(cursor p: CGPoint, t: Double, realMouseMoved: Bool) -> (progress: Double, fire: Bool) {
         // La vraie souris a la main : on désarme jusqu'à ce que la tête déplace le curseur

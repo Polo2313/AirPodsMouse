@@ -40,13 +40,14 @@ final class MotionService: NSObject, CMHeadphoneMotionManagerDelegate {
     }
 
     /// À appeler chaque seconde.
-    func healthCheck() {
+    func healthCheck(paused: Bool = false) {
         let auth = Permissions.motion
         if auth != lastAuth {
             Log.line("Autorisation Mouvements : \(auth.rawValue)")
             lastAuth = auth
             if auth == .authorized { start() }   // des mises à jour lancées avant l'accord restent muettes
         }
+        guard !paused else { return }
         let silentFor = Date().timeIntervalSince(lastSampleAt ?? startedAt)
         if silentFor > 45, Date().timeIntervalSince(startedAt) > 45, auth == .authorized { start() }
     }

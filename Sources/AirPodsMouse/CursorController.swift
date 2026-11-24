@@ -12,6 +12,7 @@ final class CursorController {
     private var pending = CGPoint.zero          // reçu des capteurs, pas encore appliqué
     private var recentPosted: [CGPoint] = []    // derniers points envoyés, pour reconnaître le vrai trackpad
     private var screens: [CGRect] = []
+    private var lastRealMouseAt: TimeInterval = -10
 
     private var lastClick = Date.distantPast
     private var lastClickRight = false
@@ -20,11 +21,13 @@ final class CursorController {
 
     init() {
         pos = CGEvent(source: nil)?.location ?? .zero
-        refreshScreens()
-        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
-                                               object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refreshScreens() }
-        }
+        _ = refreshScreens()
+    }
+
+    /// Vrai pendant que l'utilisateur déplace la vraie souris ou le trackpad (et 0,35 s après),
+    /// pour laisser la main au trackpad sans que la tête lutte contre lui.
+    var isRealMouseActive: Bool {
+        ProcessInfo.processInfo.systemUptime - lastRealMouseAt < 0.35
     }
 
     /// Aimant : > 0 quand le curseur survole un élément cliquable (part de vitesse retirée en visée fine).
@@ -95,14 +98,14 @@ final class CursorController {
     /// - Returns: true si le vrai trackpad/souris a bougé le curseur depuis le dernier appel.
     @discardableResult
     func tick(sensorsFresh: Bool) -> Bool {
-        let real = syncWithRealMouse()
-        guard sensorsFresh else { pending = .zero; return real }
-        guard pending != .zero else { return real }
+        let real = syncWithRealMouse() || isRealMouseActive
+        guard sensorsFresh, !real else { pending = .zero; return real }
+        guard pending != .zero else { return false }
         var step = CGPoint(x: pending.x * 0.35, y: pending.y * 0.35)
         if abs(pending.x) < 0.6 && abs(pending.y) < 0.6 { step = pending }
         pending.x -= step.x; pending.y -= step.y
         move(by: step)
-        return real
+        return false
     }
 
     /// Si le curseur n'est sur aucun des derniers points envoyés, c'est le vrai trackpad qui l'a bougé : on repart de là.
@@ -113,7 +116,13 @@ final class CursorController {
         guard let cur = CGEvent(source: nil)?.location else { return false }
         let ours = recentPosted.contains { abs($0.x - cur.x) <= 2 && abs($0.y - cur.y) <= 2 }
         let movedAway = abs(cur.x - pos.x) > 2 || abs(cur.y - pos.y) > 2
-        if !ours && movedAway { pos = cur; recentPosted = [cur]; return true }
+        if !ours && movedAway {
+            pos = cur
+            pending = .zero
+            recentPosted = [cur]
+            lastRealMouseAt = ProcessInfo.processInfo.systemUptime
+            return true
+        }
         return false
     }
 
@@ -165,13 +174,19 @@ final class CursorController {
         move(by: CGPoint(x: b.midX - pos.x, y: b.midY - pos.y))
     }
 
-    private func refreshScreens() {
+    /// Met à jour la géométrie des écrans et renvoie `true` uniquement si les dimensions/positions ont changé
+    /// (macOS émet `didChangeScreenParametersNotification` aussi pour True Tone, Night Shift ou le plein écran).
+    @discardableResult
+    func refreshScreens() -> Bool {
         var count: UInt32 = 0
         CGGetActiveDisplayList(0, nil, &count)
         var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
         CGGetActiveDisplayList(count, &ids, &count)
-        screens = ids.prefix(Int(count)).map { CGDisplayBounds($0) }
-        if screens.isEmpty { screens = [CGDisplayBounds(CGMainDisplayID())] }
+        var next = ids.prefix(Int(count)).map { CGDisplayBounds($0) }
+        if next.isEmpty { next = [CGDisplayBounds(CGMainDisplayID())] }
+        let changed = next != screens
+        screens = next
+        return changed
     }
 
     /// Laisse passer d'un écran à l'autre, sinon bloque au bord de l'écran courant.

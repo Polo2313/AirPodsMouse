@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import os
 
 /// Aimant : savoir si le curseur survole un élément cliquable, grâce à l'Accessibilité de macOS.
 enum ClickableProbe {
@@ -13,6 +14,8 @@ enum ClickableProbe {
         kAXMenuBarItemRole, kAXMenuButtonRole, kAXDisclosureTriangleRole, kAXTabGroupRole, kAXIncrementorRole,
         kAXComboBoxRole, kAXTextFieldRole, kAXCellRole, "AXSegment", "AXDockItem",
     ]
+    private static let queue = DispatchQueue(label: "local.airpodsmouse.ax-probe", qos: .userInteractive)
+    private static let inFlight = OSAllocatedUnfairLock(initialState: false)
 
     /// - Parameter p: position en coordonnées écran (origine en haut à gauche).
     static func isClickable(at p: CGPoint) -> Bool {
@@ -28,6 +31,24 @@ enum ClickableProbe {
             e = pe as! AXUIElement
         }
         return false
+    }
+
+    /// Version non bloquante pour la boucle à 120 Hz : interroge l'Accessibilité hors du thread principal
+    /// et ignore la demande si une vérification précédente est encore en cours.
+    static func probeAsync(at p: CGPoint, completion: @escaping @MainActor (Bool) -> Void) {
+        let started = inFlight.withLock { busy -> Bool in
+            if busy { return false }
+            busy = true
+            return true
+        }
+        guard started else { return }
+        queue.async {
+            let hit = isClickable(at: p)
+            inFlight.withLock { $0 = false }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { completion(hit) }
+            }
+        }
     }
 }
 

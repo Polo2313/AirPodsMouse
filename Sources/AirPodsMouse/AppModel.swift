@@ -42,7 +42,7 @@ final class AppModel: ObservableObject {
     @Published var nodPreset: NodPreset = .normal { didSet { engine.nodPreset = nodPreset; defaults.set(nodPreset.rawValue, forKey: "nodPreset") } }
     @Published var alignment = false { didSet { engine.alignment = alignment; defaults.set(alignment, forKey: "alignment") } }
     @Published var tiltClick = false { didSet { engine.tiltClick = tiltClick; defaults.set(tiltClick, forKey: "tiltClick") } }
-    @Published var dwellEnabled = false { didSet { dwell.reset(); dwellProgress = 0; defaults.set(dwellEnabled, forKey: "dwellEnabled") } }
+    @Published var dwellEnabled = false { didSet { dwell.disarm(at: cursor.pos); dwellProgress = 0; defaults.set(dwellEnabled, forKey: "dwellEnabled") } }
     @Published var dwellDelay = 1.0 { didSet { dwell.delay = dwellDelay; defaults.set(dwellDelay, forKey: "dwellDelay") } }
     @Published var stemScroll = false { didSet { stem.setEnabled(stemScroll && !isPaused); defaults.set(stemScroll, forKey: "stemScroll") } }
     /// Pas de défilement en fraction de hauteur d'écran : petit ⅛, moyen ¼, grand ½.
@@ -66,6 +66,7 @@ final class AppModel: ObservableObject {
     private var shake = ShakeDetector()
     private var keyMonitor: Any?
     private var lastMagnetCheck = Date.distantPast
+    private var lastMagnetPos = CGPoint(x: -9999, y: -9999)
     private let motion = MotionService()
     let cursor = CursorController()
     private var lastTimestamp: TimeInterval?
@@ -89,7 +90,7 @@ final class AppModel: ObservableObject {
             outputTimer = t
         } else if !needed, let t = outputTimer {
             t.invalidate(); outputTimer = nil
-            cursor.dropPending(); dwell.reset(); dwellProgress = 0
+            cursor.dropPending(); dwell.disarm(at: cursor.pos); dwellProgress = 0
             CursorOverlay.shared.update(visible: false)
         }
     }
@@ -110,29 +111,41 @@ final class AppModel: ObservableObject {
             // ne doivent pas figer le curseur, sinon impossible de viser la touche suivante avec la tête.
             guard (e.cgEvent?.getIntegerValueField(.eventSourceUnixProcessID) ?? 0) == 0 else { return }
             MainActor.assumeIsolated {
-                guard let self else { return }
+                guard let self, !self.isPaused, self.status == .active else { return }
                 let now = ProcessInfo.processInfo.systemUptime
                 if self.typingPause && !self.typing.isFrozen(at: now) { Log.line("Frappe : curseur figé") }
                 self.typing.keyPressed(at: now)
             }
         }
-        // Retour de veille : les capteurs restent souvent muets → on les relance, puis on recentre
+        // Retour de veille : les capteurs restent souvent muets → on les relance, puis on recentre si actif
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 Log.line("Réveil du Mac : relance des capteurs")
                 self?.motion.start()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { MainActor.assumeIsolated { self?.recenter() } }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        if !self.isPaused && self.status == .active { self.recenter() }
+                        else { self.engine.recenter(); self.dwell.disarm(at: self.cursor.pos) }
+                    }
+                }
             }
         }
-        // Écran branché ou débranché : on recentre
+        // Écran réellement branché, débranché ou redimensionné : on recentre seulement si l'appli est active
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                MainActor.assumeIsolated { Log.line("Écrans modifiés"); self?.recenter() }
+                MainActor.assumeIsolated {
+                    guard let self, self.cursor.refreshScreens() else { return }
+                    Log.line("Écrans modifiés")
+                    if !self.isPaused && self.status == .active { self.recenter() }
+                    else { self.engine.recenter(); self.dwell.disarm(at: self.cursor.pos) }
+                }
             }
         }
         motion.onConnectionChange = { [weak self] c in self?.airPodsConnected = c; if !c { self?.cursor.dropPending() } }
         axTrusted = Permissions.axTrusted
         cursor.allowed = axTrusted
+        dwell.disarm(at: cursor.pos)
         // Premier lancement : la demande système « Mouvements » attend son étape de l'accueil
         // (sinon elle apparaît par-dessus l'écran de bienvenue, sans explication).
         if onboardingDone || Permissions.motion != .notDetermined { motion.start() }
@@ -166,9 +179,10 @@ final class AppModel: ObservableObject {
         let now = ProcessInfo.processInfo.systemUptime
         let dt = min(max(rawDt, 0.001), 0.1)
 
-        // Pause pendant la frappe : le moteur suit la tête, mais rien ne bouge ni ne clique
-        if typingPause && typing.isFrozen(at: now) { cursor.dropPending(); dwell.reset(); return }
-        if typing.justResumed(at: now) { engine.reset(); cursor.dropPending(); return }   // reprise sans saut
+        // Pause pendant la frappe ou utilisation du vrai trackpad : le moteur suit la tête, mais rien ne bouge ni ne clique
+        if cursor.isRealMouseActive { cursor.dropPending(); dwell.disarm(at: cursor.pos); return }
+        if typingPause && typing.isFrozen(at: now) { cursor.dropPending(); dwell.disarm(at: cursor.pos); return }
+        if typing.justResumed(at: now) { engine.reset(); cursor.dropPending(); dwell.disarm(at: cursor.pos); return }   // reprise sans saut
 
         // Geste « non » = Échap
         if shakeEscape {
@@ -212,10 +226,18 @@ final class AppModel: ObservableObject {
         CursorOverlay.shared.update(visible: dwellProgress > 0.03 || recentClick || isDragging || scrollMode)
         let now = ProcessInfo.processInfo.systemUptime
 
-        // Aimant : ~10 fois par seconde, ralentir si le curseur survole un élément cliquable
+        // Aimant : ~10 fois par seconde en arrière-plan (sans bloquer la boucle à 120 Hz) si le curseur a bougé
         if magnet && status == .active && Date().timeIntervalSince(lastMagnetCheck) > 0.1 {
-            lastMagnetCheck = Date()
-            cursor.magnetSlowdown = ClickableProbe.isClickable(at: cursor.pos) ? magnetStrength.slowdown : 0
+            let p = cursor.pos
+            if hypot(p.x - lastMagnetPos.x, p.y - lastMagnetPos.y) > 1.5 {
+                lastMagnetCheck = Date()
+                lastMagnetPos = p
+                let strength = magnetStrength.slowdown
+                ClickableProbe.probeAsync(at: p) { [weak self] hit in
+                    guard let self else { return }
+                    self.cursor.magnetSlowdown = (self.magnet && hit) ? strength : 0
+                }
+            }
         }
 
         // Menu de clic rapide ouvert : viser une action et rester immobile
@@ -256,7 +278,7 @@ final class AppModel: ObservableObject {
     private func closeQuickMenu() {
         quickMenu = nil; quickMenuHovered = nil; quickMenuProgress = 0
         QuickMenuOverlay.shared.hide()
-        dwell.reset()
+        dwell.disarm(at: cursor.pos)
     }
 
     private func perform(_ a: DwellMenu.Action, at origin: CGPoint) {
@@ -314,7 +336,7 @@ final class AppModel: ObservableObject {
     }
 
     private func healthCheck() {
-        motion.healthCheck()
+        motion.healthCheck(paused: isPaused)
         motionAuth = Permissions.motion
         let trusted = Permissions.axTrusted
         if trusted != axTrusted {
@@ -348,7 +370,7 @@ final class AppModel: ObservableObject {
               isPaused ? "pause.circle.fill" : "play.circle.fill")
         if isPaused { if cursor.dragging { toggleDrag() }; exitScrollMode(); if quickMenu != nil { closeQuickMenu() } }
         stem.setEnabled(stemScroll && !isPaused)   // en pause, la tige règle à nouveau le volume
-        cursor.dropPending(); engine.reset(); dwell.reset()
+        cursor.dropPending(); engine.reset(); dwell.disarm(at: cursor.pos); dwellProgress = 0
         healthCheck()
     }
 
@@ -356,6 +378,8 @@ final class AppModel: ObservableObject {
     func recenter() {
         engine.recenter()
         cursor.moveToCenter()
+        dwell.disarm(at: cursor.pos)
+        dwellProgress = 0
         toast(String(localized: "Recentré"), "scope")
         Log.line("Recentré")
     }

@@ -76,6 +76,9 @@ check("dwellNotAfterRealMouseStops", dwellRun(seconds: 4, path: { _ in here }, r
 let afterHead = dwellRun(seconds: 4, path: { t in t < 1 ? here : (t < 1.3 ? CGPoint(x: 500 + (t - 1) * 200, y: 400) : CGPoint(x: 560, y: 400)) },
                          real: { t in t < 0.5 })
 check("dwellAfterRealMouseThenHead", afterHead.fires == 1, "\(afterHead)")
+var disarmed = DwellClicker(); disarmed.disarm(at: here)
+check("dwellDisarmedDoesNotFireAtStart", disarmed.update(cursor: here, t: 0, realMouseMoved: false).fire == false
+      && disarmed.update(cursor: here, t: 2.0, realMouseMoved: false).fire == false)
 
 // MARK: - Alignement tête ↔ curseur
 
