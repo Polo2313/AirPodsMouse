@@ -15,9 +15,6 @@ enum ClickableProbe {
         kAXMenuBarItemRole, kAXMenuButtonRole, kAXDisclosureTriangleRole, kAXTabGroupRole, kAXIncrementorRole,
         kAXComboBoxRole, kAXTextFieldRole, kAXCellRole, "AXSegment", "AXDockItem",
     ]
-    private static let textRoles: Set<String> = [
-        kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole, "AXSearchField",
-    ]
     private static let queue = DispatchQueue(label: "local.airpodsmouse.ax-probe", qos: .userInteractive)
     private static let inFlight = OSAllocatedUnfairLock(initialState: false)
 
@@ -37,51 +34,117 @@ enum ClickableProbe {
         return false
     }
 
-    /// Vrai si le point cliqué (ou l'élément qui vient de recevoir le focus) est une barre de recherche ou un champ de texte.
-    static func isTextInput(at p: CGPoint) -> Bool {
-        var el: AXUIElement?
-        if AXUIElementCopyElementAtPosition(system, Float(p.x), Float(p.y), &el) == .success, let hit = el {
-            if elementIsTextInput(hit) { return true }
-        }
-        if let front = NSWorkspace.shared.frontmostApplication {
-            let app = AXUIElementCreateApplication(front.processIdentifier)
-            AXUIElementSetMessagingTimeout(app, 0.05)
-            var focused: CFTypeRef?
-            if AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
-               let f = focused, CFGetTypeID(f) == AXUIElementGetTypeID() {
-                if elementIsTextInput(f as! AXUIElement) { return true }
-            }
-        }
-        return false
+    /// Active l'arbre d'accessibilité DOM dans les navigateurs Chromium/Electron (Chrome, Brave, Arc…)
+    /// pour que les barres de recherche web soient visibles par macOS.
+    static func enableWebAccessibilityOnFrontmostApp() {
+        guard let front = NSWorkspace.shared.frontmostApplication else { return }
+        let app = AXUIElementCreateApplication(front.processIdentifier)
+        AXUIElementSetMessagingTimeout(app, 0.05)
+        AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+        AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
     }
 
-    private static func elementIsTextInput(_ start: AXUIElement) -> Bool {
+    /// Détecte si le point `p` correspond réellement à une barre de recherche (ou un champ de saisie court)
+    /// situé sous le curseur, et renvoie son rectangle écran pour éviter les déclenchements en boucle.
+    /// Ne renvoie jamais `true` sur un éditeur de code, un document entier ou un élément hors du curseur.
+    static func detectSearchBar(at p: CGPoint) -> (rect: CGRect, summary: String)? {
+        if let front = NSWorkspace.shared.frontmostApplication {
+            let app = AXUIElementCreateApplication(front.processIdentifier)
+            AXUIElementSetMessagingTimeout(app, 0.06)
+            AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+            AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+
+            // 1. Élément directement sous le curseur au point cliqué
+            var el: AXUIElement?
+            if AXUIElementCopyElementAtPosition(system, Float(p.x), Float(p.y), &el) == .success, let hit = el {
+                if let match = matchSearchBarHierarchy(startingAt: hit, point: p, isFocused: false) { return match }
+            }
+
+            // 2. Élément nouvellement focalisé (via l'appli ou le système), UNIQUEMENT s'il est situé à l'endroit du clic
+            for candidate in [focusedElement(in: app), focusedElement(in: system)].compactMap({ $0 }) {
+                if let match = matchSearchBarHierarchy(startingAt: candidate, point: p, isFocused: true) { return match }
+            }
+        }
+        return nil
+    }
+
+    private static func focusedElement(in container: AXUIElement) -> AXUIElement? {
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(container, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+              let f = focused, CFGetTypeID(f) == AXUIElementGetTypeID() else { return nil }
+        return (f as! AXUIElement)
+    }
+
+    private static func matchSearchBarHierarchy(startingAt start: AXUIElement, point p: CGPoint, isFocused: Bool) -> (rect: CGRect, summary: String)? {
         var e = start
-        for _ in 0..<4 {
-            var role: CFTypeRef?
-            if AXUIElementCopyAttributeValue(e, kAXRoleAttribute as CFString, &role) == .success,
-               let r = role as? String, textRoles.contains(r) { return true }
-            var subrole: CFTypeRef?
-            if AXUIElementCopyAttributeValue(e, kAXSubroleAttribute as CFString, &subrole) == .success,
-               let sr = subrole as? String, sr == "AXSearchField" { return true }
-            var editable: CFTypeRef?
-            if AXUIElementCopyAttributeValue(e, "AXEditable" as CFString, &editable) == .success,
-               let ed = editable as? Bool, ed { return true }
+        for depth in 0..<4 {
+            let role = stringAttr(e, kAXRoleAttribute) ?? ""
+            let subrole = stringAttr(e, kAXSubroleAttribute) ?? ""
+            if depth == 0 && !isFocused && SearchBarClassifier.isDirectNonInput(role: role, subrole: subrole) {
+                return nil
+            }
+            if let r = elementFrame(e) {
+                let hints = textMetadata(of: e)
+                if SearchBarClassifier.matches(role: role, subrole: subrole, hints: hints, rect: r,
+                                               clickedAt: p, isFocusedElement: isFocused && depth == 0) {
+                    let summary = "\(role)\(subrole.isEmpty ? "" : "/\(subrole)") (\(Int(r.width))×\(Int(r.height)))"
+                    return (r, summary)
+                }
+                if depth > 0 && r.height > 120 { return nil }
+            }
             var parent: CFTypeRef?
             guard AXUIElementCopyAttributeValue(e, kAXParentAttribute as CFString, &parent) == .success,
-                  let pe = parent, CFGetTypeID(pe) == AXUIElementGetTypeID() else { return false }
+                  let pe = parent, CFGetTypeID(pe) == AXUIElementGetTypeID() else { return nil }
             e = pe as! AXUIElement
         }
-        return false
+        return nil
+    }
+
+    private static func stringAttr(_ e: AXUIElement, _ attr: String) -> String? {
+        var v: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(e, attr as CFString, &v) == .success, let s = v as? String else { return nil }
+        return s
+    }
+
+    private static func textMetadata(of e: AXUIElement) -> String {
+        let keys = ["AXPlaceholderValue", kAXDescriptionAttribute, kAXTitleAttribute,
+                    kAXRoleDescriptionAttribute, kAXHelpAttribute, "AXDOMIdentifier"]
+        var parts: [String] = []
+        for k in keys {
+            if let s = stringAttr(e, k), !s.isEmpty { parts.append(s.lowercased()) }
+        }
+        return parts.joined(separator: " ")
+    }
+
+    private static func elementFrame(_ e: AXUIElement) -> CGRect? {
+        var pv: CFTypeRef?
+        var sv: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(e, kAXPositionAttribute as CFString, &pv) == .success,
+              AXUIElementCopyAttributeValue(e, kAXSizeAttribute as CFString, &sv) == .success,
+              let pVal = pv, let sVal = sv,
+              CFGetTypeID(pVal) == AXValueGetTypeID(),
+              CFGetTypeID(sVal) == AXValueGetTypeID() else { return nil }
+        var pt = CGPoint.zero
+        var sz = CGSize.zero
+        guard AXValueGetValue(pVal as! AXValue, .cgPoint, &pt),
+              AXValueGetValue(sVal as! AXValue, .cgSize, &sz) else { return nil }
+        return CGRect(origin: pt, size: sz)
     }
 
     /// Vérifie hors du thread principal (après un court délai pour laisser le clic donner le focus au champ)
-    /// si l'utilisateur vient de cliquer dans une barre de recherche ou une zone de texte.
-    static func probeTextInputAsync(at p: CGPoint, after delay: TimeInterval = 0.14, completion: @escaping @MainActor (Bool) -> Void) {
-        queue.asyncAfter(deadline: .now() + delay) {
-            let hit = isTextInput(at: p)
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { completion(hit) }
+    /// si l'utilisateur vient de cliquer dans une barre de recherche. Réessaie une fois à 0,28 s pour les pages web lentes.
+    static func probeSearchBarAsync(at p: CGPoint, completion: @escaping @MainActor ((rect: CGRect, summary: String)?) -> Void) {
+        queue.async {
+            enableWebAccessibilityOnFrontmostApp()
+        }
+        queue.asyncAfter(deadline: .now() + 0.14) {
+            if let hit = detectSearchBar(at: p) {
+                DispatchQueue.main.async { MainActor.assumeIsolated { completion(hit) } }
+                return
+            }
+            queue.asyncAfter(deadline: .now() + 0.14) {
+                let retry = detectSearchBar(at: p)
+                DispatchQueue.main.async { MainActor.assumeIsolated { completion(retry) } }
             }
         }
     }
@@ -123,6 +186,29 @@ enum HandsFree {
             return parsed
         }
         return .defaultShortcut
+    }
+
+    /// Lit la fin du journal de Librewispr pour savoir s'il est déjà en train d'enregistrer la voix.
+    static func isLibrewisprRecording() -> Bool {
+        let logURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/com.librewispr.app/logs/librewispr.log")
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: logURL.path),
+              let mtime = attrs[.modificationDate] as? Date,
+              Date().timeIntervalSince(mtime) < 90,
+              let fh = try? FileHandle(forReadingFrom: logURL) else { return false }
+        defer { try? fh.close() }
+        let size = (try? fh.seekToEnd()) ?? 0
+        let readLen: UInt64 = min(size, 16384)
+        try? fh.seek(toOffset: size - readLen)
+        guard let data = try? fh.readToEnd(),
+              let tail = String(data: data, encoding: .utf8) else { return false }
+        let lastStart = tail.range(of: "start_recording: entry", options: .backwards)?.lowerBound
+        let lastStop = tail.range(of: "stop_recording: entry", options: .backwards)?.lowerBound
+        let lastCancel = tail.range(of: "cancel_recording: entry", options: .backwards)?.lowerBound
+        guard let startIdx = lastStart else { return false }
+        if let stopIdx = lastStop, stopIdx > startIdx { return false }
+        if let cancelIdx = lastCancel, cancelIdx > startIdx { return false }
+        return true
     }
 
     /// Déclenche l'écoute vocale dans Librewispr en envoyant son raccourci global (et lance l'appli si nécessaire).

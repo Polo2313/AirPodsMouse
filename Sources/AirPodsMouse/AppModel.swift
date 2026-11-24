@@ -69,6 +69,10 @@ final class AppModel: ObservableObject {
     private var keyMonitor: Any?
     private var lastMagnetCheck = Date.distantPast
     private var lastMagnetPos = CGPoint(x: -9999, y: -9999)
+    /// Dernière barre de recherche où la saisie vocale a été lancée automatiquement : évite que le clic automatique
+    /// ne relance et n'arrête Librewispr en boucle tant que le curseur reste dans cette même barre.
+    private var activeSearchBarRect: CGRect?
+    private var lastVoiceTriggerAt = Date.distantPast
     private let motion = MotionService()
     let cursor = CursorController()
     private var lastTimestamp: TimeInterval?
@@ -224,6 +228,9 @@ final class AppModel: ObservableObject {
         cursor.scrollTick()
         let fresh = motion.lastSampleAt.map { Date().timeIntervalSince($0) < 0.3 } ?? false
         let realMoved = cursor.tick(sensorsFresh: fresh && !isPaused && axTrusted)
+        if let rect = activeSearchBarRect, !rect.insetBy(dx: -24, dy: -24).contains(cursor.pos) {
+            activeSearchBarRect = nil
+        }
         let recentClick = lastClickAt.map { Date().timeIntervalSince($0) < 0.4 } ?? false
         CursorOverlay.shared.update(visible: dwellProgress > 0.03 || recentClick || isDragging || scrollMode)
         let now = ProcessInfo.processInfo.systemUptime
@@ -331,6 +338,7 @@ final class AppModel: ObservableObject {
     }
 
     func startVoiceInput() {
+        lastVoiceTriggerAt = Date()
         let msg = HandsFree.triggerVoiceInput(mode: voiceInputMode)
         toast(msg, "mic.fill")
     }
@@ -342,9 +350,25 @@ final class AppModel: ObservableObject {
         let clickedPos = cursor.pos
         Log.line("Clic \(right ? "droit" : "gauche") (\(source)) en \(Int(clickedPos.x)),\(Int(clickedPos.y))")
         if !right, autoVoiceOnTextClick {
-            ClickableProbe.probeTextInputAsync(at: clickedPos) { [weak self] isText in
-                guard let self, self.autoVoiceOnTextClick, !self.isPaused, isText else { return }
-                Log.line("Champ de recherche/texte détecté → lancement vocal")
+            // Si on est déjà dans la même barre de recherche et que le clic automatique se redéclenche,
+            // on ne coupe pas l'enregistrement en cours et on ne relance pas en boucle.
+            if let activeRect = activeSearchBarRect, activeRect.insetBy(dx: -16, dy: -16).contains(clickedPos) {
+                if source == "automatique" { return }
+                // Un hochement volontaire pendant que Librewispr écoute permet d'arrêter et coller le texte
+                if voiceInputMode == .librewispr, HandsFree.isLibrewisprRecording(),
+                   Date().timeIntervalSince(lastVoiceTriggerAt) > 1.2 {
+                    Log.line("Hochement dans la barre de recherche → fin d'écoute Librewispr")
+                    startVoiceInput()
+                }
+                return
+            }
+            // Si Librewispr est déjà en train d'enregistrer, on ne le coupe pas sur un clic ailleurs
+            if voiceInputMode == .librewispr, HandsFree.isLibrewisprRecording() { return }
+            ClickableProbe.probeSearchBarAsync(at: clickedPos) { [weak self] match in
+                guard let self, self.autoVoiceOnTextClick, !self.isPaused, let match else { return }
+                if self.voiceInputMode == .librewispr, HandsFree.isLibrewisprRecording() { return }
+                self.activeSearchBarRect = match.rect
+                Log.line("Barre de recherche détectée : \(match.summary) → lancement vocal")
                 self.startVoiceInput()
             }
         }

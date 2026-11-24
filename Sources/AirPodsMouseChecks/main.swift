@@ -274,5 +274,23 @@ let sampleSettings = Data(#"{"onboarding_complete":true,"app_settings":{"shortcu
 check("librewisprShortcutFromJSON", LibrewisprShortcut.fromSettingsJSON(sampleSettings) == .defaultShortcut)
 check("voiceInputModesComplete", VoiceInputMode.allCases.count == 4 && VoiceInputMode(rawValue: 0) == .librewispr)
 
+let searchRect = CGRect(x: 400, y: 80, width: 500, height: 38)
+let editorRect = CGRect(x: 200, y: 120, width: 1100, height: 700)
+check("searchClassifierAcceptsSearchBar",
+      SearchBarClassifier.matches(role: "AXTextField", subrole: "AXSearchField", hints: "Rechercher",
+                                  rect: searchRect, clickedAt: CGPoint(x: 520, y: 95), isFocusedElement: false))
+check("searchClassifierAcceptsGoogleCompactTextArea",
+      SearchBarClassifier.matches(role: "AXTextArea", subrole: "", hints: "Rechercher sur Google",
+                                  rect: CGRect(x: 400, y: 300, width: 580, height: 48),
+                                  clickedAt: CGPoint(x: 550, y: 320), isFocusedElement: false))
+check("searchClassifierRejectsClickFarFromFocusedSearchBar",
+      !SearchBarClassifier.matches(role: "AXTextField", subrole: "AXSearchField", hints: "Rechercher",
+                                   rect: searchRect, clickedAt: CGPoint(x: 1307, y: 599), isFocusedElement: true))
+check("searchClassifierRejectsLargeCodeEditor",
+      !SearchBarClassifier.matches(role: "AXTextArea", subrole: "", hints: "Editor",
+                                   rect: editorRect, clickedAt: CGPoint(x: 600, y: 400), isFocusedElement: true))
+check("searchClassifierRejectsButtons",
+      SearchBarClassifier.isDirectNonInput(role: "AXButton", subrole: ""))
+
 print(failures == 0 ? "\nTout est vert." : "\n\(failures) échec(s).")
 exit(failures == 0 ? 0 : 1)

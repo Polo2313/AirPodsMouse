@@ -136,6 +136,44 @@ public enum VoiceInputMode: Int, CaseIterable, Sendable {
     case onScreenKeyboard = 3
 }
 
+/// Règles pures de classification d'un élément d'Accessibilité comme barre de recherche / champ de saisie court.
+/// Exige que le clic `point` soit dans (ou tout près de) la barre et que la hauteur soit celle d'une barre (≤ 92 px),
+/// pour ne jamais confondre un éditeur de code, une page web entière ou un champ focalisé ailleurs à l'écran.
+public enum SearchBarClassifier {
+    private static let textRoles: Set<String> = ["AXTextField", "AXComboBox", "AXSearchField"]
+    private static let nonInputRoles: Set<String> = [
+        "AXButton", "AXLink", "AXCheckBox", "AXRadioButton", "AXMenuItem",
+        "AXMenuBarItem", "AXMenuButton", "AXDisclosureTriangle", "AXTabGroup",
+        "AXSegment", "AXDockItem", "AXScrollBar",
+    ]
+    private static let searchKeywords: [String] = [
+        "recherch", "search", "chercher", "trouver", "find", "adresse", "address",
+        "url", "google", "query", "filter", "filtrer", "ask", "demander", "question", "prompt",
+    ]
+
+    public static func isDirectNonInput(role: String, subrole: String) -> Bool {
+        nonInputRoles.contains(role) && subrole != "AXSearchField"
+    }
+
+    public static func matches(role: String, subrole: String, hints: String, rect: CGRect,
+                               clickedAt p: CGPoint, isFocusedElement: Bool) -> Bool {
+        // Une barre de recherche ou de saisie fait entre 12 et 92 px de haut (jamais 400 px comme un éditeur de code)
+        guard rect.height >= 12, rect.height <= 92, rect.width >= 40 else { return false }
+        // Tolérance horizontale plus large pour l'élément focalisé (clic sur la loupe ou la marge interne de la barre)
+        let dx: CGFloat = isFocusedElement ? -110 : -16
+        let dy: CGFloat = isFocusedElement ? -28 : -16
+        guard rect.insetBy(dx: dx, dy: dy).contains(p) else { return false }
+
+        let lowerHints = hints.lowercased()
+        let hasKeyword = searchKeywords.contains { lowerHints.contains($0) }
+        if subrole == "AXSearchField" || role == "AXSearchField" { return true }
+        if textRoles.contains(role) && rect.height <= 84 { return true }
+        if role == "AXTextArea" && rect.height <= 84 && (hasKeyword || isFocusedElement) { return true }
+        if (role == "AXGroup" || role == "AXUnknown") && rect.height <= 64 && hasKeyword { return true }
+        return false
+    }
+}
+
 /// Raccourci global configuré dans Librewispr (`~/Library/Application Support/com.librewispr/settings.json`).
 public struct LibrewisprShortcut: Equatable, Sendable {
     public let keyCode: UInt16
