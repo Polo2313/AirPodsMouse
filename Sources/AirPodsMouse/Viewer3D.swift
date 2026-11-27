@@ -142,20 +142,25 @@ final class Viewer3D: NSObject {
 
     /// q : orientation des écouteurs · g : gravité (repère écouteur) · forward : direction pointée (repère écouteur)
     func update(q: simd_quatd, g: SIMD3<Double>, forward: SIMD3<Double>, yawRate: Double, pitchRate: Double) {
-        guard window.isVisible else { return }
+        guard window.isVisible, simd_length_squared(g) > 1e-9, q.length > 1e-9 else { return }
+        let unitQ = q.normalized
         if needsRecenter || q0 == nil {
             needsRecenter = false
-            q0 = q
+            q0 = unitQ
             // Repère « boîtier » : x = droite, y = haut, z = arrière, exprimé dans le repère écouteur
             let up = -simd_normalize(g)
             var fwd = forward - simd_dot(forward, up) * up
-            if simd_length(fwd) < 1e-3 { fwd = abs(up.x) < 0.9 ? SIMD3(1, 0, 0) : SIMD3(0, 1, 0); fwd -= simd_dot(fwd, up) * up }
+            if !(simd_length_squared(fwd) > 1e-6) {
+                fwd = abs(up.x) < 0.9 ? SIMD3(1, 0, 0) : SIMD3(0, 1, 0)
+                fwd -= simd_dot(fwd, up) * up
+            }
             fwd = simd_normalize(fwd)
             let right = simd_cross(fwd, up)
             basis = simd_quatd(simd_double3x3(columns: (right, up, -fwd)))
         }
+        guard let refQ = q0 else { return }
         // Rotation depuis le recentrage, exprimée dans le repère du boîtier
-        let d = basis.inverse * (q0!.inverse * q) * basis
+        let d = basis.inverse * (refQ.inverse * unitQ) * basis
         pivot.simdOrientation = simd_quatf(ix: Float(d.imag.x), iy: Float(d.imag.y), iz: Float(d.imag.z), r: Float(d.real))
 
         if Date().timeIntervalSince(lastInfo) > 0.1 {
@@ -190,8 +195,10 @@ final class Viewer3D: NSObject {
 extension Viewer3D {
     /// Met à jour la vue depuis une mesure brute des capteurs.
     func update(motion m: CMDeviceMotion, engine: PointerEngine) {
+        let rawG = V3(m.gravity.x, m.gravity.y, m.gravity.z)
+        guard simd_length_squared(rawG) > 1e-9 else { return }
         let w = V3(m.rotationRate.x, m.rotationRate.y, m.rotationRate.z)
-        let g = simd_normalize(V3(m.gravity.x, m.gravity.y, m.gravity.z))
+        let g = simd_normalize(rawG)
         guard let ax = engine.axes(g: g) else { return }
         let r = engine.rates(w: w, g: g)
         let q = m.attitude.quaternion

@@ -24,6 +24,7 @@ public struct DwellClicker {
 
     /// - Returns: `progress` 0…1 (pour l'anneau autour du curseur) et `fire` au moment du clic.
     public mutating func update(cursor p: CGPoint, t: Double, realMouseMoved: Bool) -> (progress: Double, fire: Bool) {
+        guard p.x.isFinite, p.y.isFinite, t.isFinite else { return (0, false) }
         // La vraie souris a la main : on désarme jusqu'à ce que la tête déplace le curseur
         // (sinon lâcher le trackpad déclencherait un clic une seconde plus tard).
         if realMouseMoved { count = 0; lastFire = p; return (0, false) }
@@ -33,12 +34,13 @@ public struct DwellClicker {
         }
         if count > 0 {
             let c = CGPoint(x: sum.x / count, y: sum.y / count)
-            if hypot(p.x - c.x, p.y - c.y) > radius { count = 0 }  // le curseur bouge : on repart
+            if hypot(p.x - c.x, p.y - c.y) > radius || t < since { count = 0 }  // le curseur bouge : on repart
         }
         if count == 0 { sum = .zero; since = t }
         sum.x += p.x; sum.y += p.y; count += 1
 
-        let progress = min((t - since) / delay, 1)
+        let effectiveDelay = delay.isFinite ? max(delay, 0.1) : 1.0
+        let progress = min(max((t - since) / effectiveDelay, 0), 1)
         if progress >= 1 {
             lastFire = p; count = 0
             return (1, true)
