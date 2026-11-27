@@ -9,6 +9,7 @@ final class ToastOverlay {
     private let panel: NSPanel
     private let host: NSHostingView<ToastView>
     private var hideWork: DispatchWorkItem?
+    private var generation: UInt64 = 0
 
     private init() {
         host = NSHostingView(rootView: ToastView(symbol: "", text: ""))
@@ -24,21 +25,42 @@ final class ToastOverlay {
     }
 
     func show(_ text: String, symbol: String) {
+        generation &+= 1
+        let gen = generation
+        hideWork?.cancel()
         host.rootView = ToastView(symbol: symbol, text: text)
+        host.layoutSubtreeIfNeeded()
         let size = host.fittingSize
         let m = NSEvent.mouseLocation
-        // En bas à droite du curseur, sans sortir de l'écran
-        let screen = NSScreen.screens.first { $0.frame.contains(m) }?.visibleFrame ?? .zero
+        // En bas à droite du curseur, sans sortir de l'écran (y compris sur le bord maxX/maxY)
+        let targetScreen = NSScreen.screens.first { $0.frame.insetBy(dx: -1, dy: -1).contains(m) }
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
         var origin = NSPoint(x: m.x + 22, y: m.y - 22 - size.height)
-        origin.x = min(max(origin.x, screen.minX + 8), screen.maxX - size.width - 8)
-        origin.y = min(max(origin.y, screen.minY + 8), screen.maxY - size.height - 8)
+        if let screen = targetScreen?.visibleFrame {
+            let maxX = max(screen.minX + 8, screen.maxX - size.width - 8)
+            let maxY = max(screen.minY + 8, screen.maxY - size.height - 8)
+            origin.x = min(max(origin.x, screen.minX + 8), maxX)
+            origin.y = min(max(origin.y, screen.minY + 8), maxY)
+        }
         panel.setFrame(NSRect(origin: origin, size: size), display: true)
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0
+            panel.animator().alphaValue = 1
+        }
         panel.alphaValue = 1
         panel.orderFrontRegardless()
-        hideWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            NSAnimationContext.runAnimationGroup({ $0.duration = 0.3; self?.panel.animator().alphaValue = 0 },
-                                                 completionHandler: { MainActor.assumeIsolated { self?.panel.orderOut(nil) } })
+            MainActor.assumeIsolated {
+                guard let self, self.generation == gen else { return }
+                NSAnimationContext.runAnimationGroup({ $0.duration = 0.3; self.panel.animator().alphaValue = 0 },
+                                                     completionHandler: {
+                    MainActor.assumeIsolated {
+                        guard self.generation == gen else { return }
+                        self.panel.orderOut(nil)
+                    }
+                })
+            }
         }
         hideWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.2, execute: work)
@@ -53,6 +75,7 @@ struct ToastView: View {
             Image(systemName: symbol).font(.system(size: 14, weight: .semibold)).foregroundStyle(Color.brand)
             Text(text).font(.system(size: 13, weight: .medium)).fixedSize()
         }
+        .accessibilityElement(children: .combine)
         .padding(.horizontal, 12).padding(.vertical, 8)
         .background(.regularMaterial, in: Capsule())
         .overlay(Capsule().strokeBorder(.white.opacity(0.12)))
