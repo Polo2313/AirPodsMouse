@@ -47,6 +47,12 @@ final class MotionService: NSObject, CMHeadphoneMotionManagerDelegate {
         }
     }
 
+    func stop() {
+        manager.stopDeviceMotionUpdates()
+        connected = false
+        lastSampleAt = nil
+    }
+
     /// À appeler chaque seconde.
     func healthCheck(paused: Bool = false) {
         let auth = Permissions.motion
@@ -57,8 +63,11 @@ final class MotionService: NSObject, CMHeadphoneMotionManagerDelegate {
         }
         guard !paused else { return }
         let silentFor = Date().timeIntervalSince(lastSampleAt ?? startedAt)
-        // Ne relance en silence que si des AirPods sont effectivement connectés au Mac
-        if silentFor > 45, Date().timeIntervalSince(startedAt) > 45, auth == .authorized,
+        let sinceRestart = Date().timeIntervalSince(startedAt)
+        // Si les AirPods sont déjà présents en sortie audio mais que le flux n'a jamais démarré (!connected),
+        // une relance douce après 12 s réveille le capteur 4× plus vite sans couper une connexion active (45 s).
+        let retryAfter: TimeInterval = connected ? 45 : 12
+        if silentFor > retryAfter, sinceRestart > retryAfter, auth == .authorized,
            (connected || AudioOutput.airPods() != nil) {
             start(resetInitialClock: false)
         }

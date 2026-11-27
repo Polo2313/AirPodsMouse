@@ -17,11 +17,16 @@ struct MenuBarContent: View {
             .keyboardShortcut("p", modifiers: [.control, .option])
         Toggle("Clic automatique", isOn: $model.dwellEnabled)
         Toggle("Clic par hochement de tête", isOn: $model.nodClick)
+        Toggle("Mémoire des bords & alignement", isOn: Binding(
+            get: { model.edgeMemory && model.alignment },
+            set: { model.edgeMemory = $0; model.alignment = $0 }
+        ))
         Divider()
         Button(model.isDragging ? LocalizedStringKey("Lâcher") : LocalizedStringKey("Glisser-déposer")) { model.toggleDrag() }
         Button(model.scrollMode ? LocalizedStringKey("Arrêter de défiler") : LocalizedStringKey("Défiler avec la tête")) { model.toggleScrollMode() }
         Toggle("Parler au clic dans une recherche", isOn: $model.autoVoiceOnTextClick)
-        Button("Parler maintenant") { model.startVoiceInput() }
+        Button(model.isVoiceListening ? LocalizedStringKey("Arrêter l'écoute") : LocalizedStringKey("Parler maintenant")) { model.startVoiceInput() }
+            .keyboardShortcut("m", modifiers: [.control, .option])
         Button("Clavier visuel") { HandsFree.showKeyboard() }
         Button("Dictée") { HandsFree.startDictation() }
         Divider()

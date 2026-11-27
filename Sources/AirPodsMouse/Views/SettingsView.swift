@@ -132,7 +132,10 @@ struct GeneralPane: View {
                     }
                 }
                 HStack {
-                    Button { model.startVoiceInput() } label: { Label("Parler maintenant", systemImage: "mic.fill") }
+                    Button { model.startVoiceInput() } label: {
+                        Label(model.isVoiceListening ? LocalizedStringKey("Arrêter l'écoute") : LocalizedStringKey("Parler maintenant"),
+                              systemImage: model.isVoiceListening ? "mic.slash.fill" : "mic.fill")
+                    }
                     Button { HandsFree.showKeyboard() } label: { Label("Clavier visuel", systemImage: "keyboard") }
                     Button { HandsFree.startDictation() } label: { Label("Dictée", systemImage: "mic") }
                 }
@@ -152,6 +155,7 @@ struct GeneralPane: View {
                 LabeledContent("Recentrer (je regarde le centre)") { Text(verbatim: "⌃ ⌥ C").monospaced() }
                 LabeledContent("Glisser-déposer (attraper / lâcher)") { Text(verbatim: "⌃ ⌥ D").monospaced() }
                 LabeledContent("Défiler avec la tête") { Text(verbatim: "⌃ ⌥ S").monospaced() }
+                LabeledContent("Dicter avec la voix") { Text(verbatim: "⌃ ⌥ M").monospaced() }
                 LabeledContent("Ouvrir les réglages") { Text(verbatim: "⌃ ⌥ V").monospaced() }
                 LabeledContent("Quitter") { Text(verbatim: "⌃ ⌥ Q").monospaced() }
             }
@@ -198,6 +202,7 @@ struct PointerPane: View {
             }
 
             Section {
+                Toggle("Mémoire des bords (garder le fil hors de l'écran)", isOn: $model.edgeMemory)
                 Toggle("Garder la tête alignée avec l'écran", isOn: $model.alignment)
                 HStack {
                     Text("Recentrer maintenant")
@@ -207,7 +212,7 @@ struct PointerPane: View {
             } header: {
                 Text("Alignement")
             } footer: {
-                Text("Regarder en face de l'écran ramène le curseur au centre, même après avoir regardé au-delà d'un bord. L'appli se recalibre toute seule en continu ; regarde le centre et appuie sur ⌃⌥C pour recentrer tout de suite.")
+                Text("Quand la souris touche un bord et que tu continues de tourner la tête, elle attend que ta tête revienne au bord avant de repartir. Regarder en face de l'écran ramène toujours le curseur au centre (⌃⌥C pour recentrer tout de suite).")
             }
 
             Section {
@@ -238,6 +243,11 @@ struct PointerPane: View {
                     }
                     Spacer()
                     Button("Calibrer…") { model.startCalibration() }
+                        .disabled(model.status == .calibrating)
+                }
+                if model.status == .calibrating {
+                    ProgressView(value: model.calibrationProgress)
+                        .tint(Color.brand)
                 }
                 if let msg = model.calibrationMessage {
                     Text(msg).font(.callout).foregroundStyle(.secondary)

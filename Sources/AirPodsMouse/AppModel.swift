@@ -22,6 +22,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var dwellProgress = 0.0
     @Published private(set) var lastClickAt: Date?
     @Published private(set) var calibrationMessage: String?
+    @Published private(set) var calibrationProgress = 0.0
     /// Vitesses de la tête (rad/s), ~15 fois par seconde : pour l'indicateur de l'accueil.
     @Published private(set) var headRates = SIMD2<Double>(0, 0)
     @Published private(set) var isDragging = false
@@ -29,10 +30,13 @@ final class AppModel: ObservableObject {
     @Published private(set) var quickMenu: DwellMenu?
     @Published private(set) var quickMenuHovered: DwellMenu.Action?
     @Published private(set) var quickMenuProgress = 0.0
+    @Published private(set) var isVoiceListening = false
+    /// Suspend automatiquement le curseur quand AirDance est au premier plan (pour ne pas déplacer la souris en dansant).
+    @Published private(set) var suspendedForAirDance = false
 
     // MARK: Réglages
     private let defaults = UserDefaults.standard
-    static let settingsVersion = 5
+    static let settingsVersion = 6
 
     @Published var sensitivity = 1.0 { didSet { engine.sensitivity = sensitivity; defaults.set(sensitivity, forKey: "sensitivity") } }
     @Published var verticalRatio = 2.4 { didSet { engine.verticalRatio = verticalRatio; defaults.set(verticalRatio, forKey: "verticalRatio") } }
@@ -40,7 +44,8 @@ final class AppModel: ObservableObject {
     @Published var invertY = false { didSet { engine.invertY = invertY; defaults.set(invertY, forKey: "invertY") } }
     @Published var nodClick = true { didSet { engine.nodClick = nodClick; defaults.set(nodClick, forKey: "nodClick") } }
     @Published var nodPreset: NodPreset = .normal { didSet { engine.nodPreset = nodPreset; defaults.set(nodPreset.rawValue, forKey: "nodPreset") } }
-    @Published var alignment = false { didSet { engine.alignment = alignment; defaults.set(alignment, forKey: "alignment") } }
+    @Published var edgeMemory = true { didSet { engine.edgeMemory = edgeMemory; defaults.set(edgeMemory, forKey: "edgeMemory") } }
+    @Published var alignment = true { didSet { engine.alignment = alignment; defaults.set(alignment, forKey: "alignment") } }
     @Published var tiltClick = false { didSet { engine.tiltClick = tiltClick; defaults.set(tiltClick, forKey: "tiltClick") } }
     @Published var dwellEnabled = false { didSet { dwell.disarm(at: cursor.pos); dwellProgress = 0; defaults.set(dwellEnabled, forKey: "dwellEnabled") } }
     @Published var dwellDelay = 1.0 { didSet { dwell.delay = dwellDelay; defaults.set(dwellDelay, forKey: "dwellDelay") } }
@@ -72,7 +77,10 @@ final class AppModel: ObservableObject {
     /// Dernière barre de recherche où la saisie vocale a été lancée automatiquement : évite que le clic automatique
     /// ne relance et n'arrête Librewispr en boucle tant que le curseur reste dans cette même barre.
     private var activeSearchBarRect: CGRect?
+    private var quickMenuTarget: CGPoint?
     private var lastVoiceTriggerAt = Date.distantPast
+    private var voiceListening = false
+    private var foreignMovesSince = Date()
     private let motion = MotionService()
     let cursor = CursorController()
     private var lastTimestamp: TimeInterval?
@@ -89,7 +97,8 @@ final class AppModel: ObservableObject {
     /// La boucle à 120 images/s ne tourne que si elle sert : au repos (AirPods inactifs, pause), l'appli ne réveille
     /// plus le Mac 120 fois par seconde (mesuré : 1,6 % de processeur au repos avant).
     private func updateOutputLoop() {
-        let needed = (status == .active && !isPaused) || scrollMode || quickMenu != nil || cursor.hasPendingScroll
+        let effectivePaused = isPaused || suspendedForAirDance
+        let needed = (status == .active && !effectivePaused) || scrollMode || quickMenu != nil || cursor.hasPendingScroll
         if needed, outputTimer == nil {
             let t = Timer(timeInterval: 1.0 / 120, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.outputTick() } }
             RunLoop.main.add(t, forMode: .common)
@@ -177,16 +186,20 @@ final class AppModel: ObservableObject {
         }
         if calibSamples != nil {
             calibSamples!.append((w, g, min(max(rawDt, 0.001), 0.1)))
-            if Date() >= calibEnd { finishCalibration() }
+            let rem = calibEnd.timeIntervalSinceNow
+            let p = min(max(1.0 - rem / 3.0, 0), 1)
+            if abs(p - calibrationProgress) > 0.03 || rem <= 0 { calibrationProgress = p }
+            if rem <= 0 { finishCalibration() }
             return
         }
         let out = engine.step(w: w, g: g, dt: rawDt, t: m.timestamp, screen: cursor.screenContext)
-        guard !isPaused, axTrusted else { cursor.dropPending(); return }
+        guard !isPaused, !suspendedForAirDance, axTrusted else { cursor.dropPending(); return }
         let now = ProcessInfo.processInfo.systemUptime
         let dt = min(max(rawDt, 0.001), 0.1)
 
         // Pause pendant la frappe ou utilisation du vrai trackpad : le moteur suit la tête, mais rien ne bouge ni ne clique
         if cursor.isRealMouseActive { cursor.dropPending(); dwell.disarm(at: cursor.pos); return }
+        if cursor.consumeRealMouseResume() { engine.reanchorAfterExternalMove(); cursor.dropPending(); dwell.disarm(at: cursor.pos); return }
         if typingPause && typing.isFrozen(at: now) { cursor.dropPending(); dwell.disarm(at: cursor.pos); return }
         if typing.justResumed(at: now) { engine.reset(); cursor.dropPending(); dwell.disarm(at: cursor.pos); return }   // reprise sans saut
 
@@ -257,14 +270,22 @@ final class AppModel: ObservableObject {
             case .pending(let h, let p):
                 if h != quickMenuHovered { quickMenuHovered = h }
                 if abs(p - quickMenuProgress) > 0.02 || (p == 0) != (quickMenuProgress == 0) { quickMenuProgress = p }
-            case .chosen(let a): closeQuickMenu(); perform(a, at: menu.origin)
+            case .chosen(let a):
+                let target = quickMenuTarget ?? menu.origin
+                closeQuickMenu()
+                perform(a, at: target)
             case .cancelled: closeQuickMenu(); Log.line("Menu de clic annulé")
             }
             return
         }
 
         let typingFrozen = typingPause && typing.isFrozen(at: now)
-        guard dwellEnabled, status == .active, !scrollMode, !typingFrozen else {
+        let headStillTurning = hypot(headRates.x, headRates.y) > 0.14
+        // Empêche les clics automatiques fantômes quand le curseur est bloqué contre un bord de l'écran
+        // (ex. quand on tourne la tête sur le côté ou vers le bas hors de l'écran).
+        guard dwellEnabled, status == .active, !scrollMode, !typingFrozen,
+              !cursor.isPinnedAtScreenEdge, !headStillTurning else {
+            if cursor.isPinnedAtScreenEdge || headStillTurning { dwell.reset() }
             if dwellProgress != 0 { dwellProgress = 0 }
             return
         }
@@ -283,6 +304,7 @@ final class AppModel: ObservableObject {
         let clamped = CGPoint(x: min(max(p.x, b.minX + margin), b.maxX - margin),
                               y: min(max(p.y, b.minY + margin), b.maxY - margin))
         if clamped != p { cursor.moveTo(clamped) }
+        quickMenuTarget = p
         quickMenu = DwellMenu(origin: clamped, openedAt: t)
         quickMenuHovered = nil; quickMenuProgress = 0; dwellProgress = 0
         QuickMenuOverlay.shared.show(at: clamped)
@@ -290,7 +312,7 @@ final class AppModel: ObservableObject {
     }
 
     private func closeQuickMenu() {
-        quickMenu = nil; quickMenuHovered = nil; quickMenuProgress = 0
+        quickMenu = nil; quickMenuHovered = nil; quickMenuProgress = 0; quickMenuTarget = nil
         QuickMenuOverlay.shared.hide()
         dwell.disarm(at: cursor.pos)
     }
@@ -342,9 +364,27 @@ final class AppModel: ObservableObject {
     }
 
     func startVoiceInput() {
+        if voiceListening { stopVoiceInput(); return }
         lastVoiceTriggerAt = Date()
         let msg = HandsFree.triggerVoiceInput(mode: voiceInputMode)
-        toast(msg, "mic.fill")
+        if voiceInputMode == .librewispr {
+            voiceListening = true
+            isVoiceListening = true
+            toast(String(localized: "Parle — reclique dans la barre pour arrêter"), "mic.fill")
+        } else {
+            toast(msg, "mic.fill")
+        }
+    }
+
+    /// Arrête l'écoute Librewispr (même raccourci qu'au lancement : Librewispr colle alors le texte).
+    func stopVoiceInput() {
+        voiceListening = false
+        isVoiceListening = false
+        activeSearchBarRect = nil
+        if HandsFree.stopLibrewispr() {
+            Log.line("Fin d'écoute Librewispr")
+            toast(String(localized: "Écoute arrêtée"), "mic.slash.fill")
+        }
     }
 
     private func click(right: Bool, source: String) {
@@ -379,7 +419,40 @@ final class AppModel: ObservableObject {
     }
 
     private func healthCheck() {
-        motion.healthCheck(paused: isPaused)
+        let airDanceFront = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.paul.airdance"
+        if airDanceFront != suspendedForAirDance {
+            suspendedForAirDance = airDanceFront
+            if airDanceFront {
+                if cursor.dragging { toggleDrag() }
+                exitScrollMode()
+                if quickMenu != nil { closeQuickMenu() }
+                cursor.dropPending(); dwell.disarm(at: cursor.pos); dwellProgress = 0
+                // Ne JAMAIS appeler motion.stop() ici : chaque stop/start provoque une déconnexion/reconnexion
+                // dans audioaccessoryd qui coupe aussi le flux d'AirDance ! On ignore simplement les mesures.
+                Log.line("AirDance au premier plan : pointeur mis en veille automatique")
+            } else {
+                engine.reanchorAfterExternalMove(); cursor.dropPending(); dwell.disarm(at: cursor.pos)
+                Log.line("AirDance quitté/arrière-plan : reprise automatique du pointeur")
+            }
+        }
+        motion.healthCheck(paused: isPaused || suspendedForAirDance)
+        // Synchronise l'état d'écoute Librewispr si l'utilisateur l'a coupé au clavier ou par silence.
+        if voiceListening {
+            if Date().timeIntervalSince(lastVoiceTriggerAt) > 180
+                || (Date().timeIntervalSince(lastVoiceTriggerAt) > 3.5 && !HandsFree.isLibrewisprRecording()) {
+                voiceListening = false
+                isVoiceListening = false
+                activeSearchBarRect = nil
+            }
+        }
+        // Diagnostic : beaucoup de reprises « vraie souris » sans toucher au trackpad = une autre appli bouge le curseur
+        if Date().timeIntervalSince(foreignMovesSince) >= 60 {
+            if cursor.foreignMoves > 30 && status == .active {
+                Log.line("⚠️ Curseur déplacé \(cursor.foreignMoves) fois par une autre source en 1 min (trackpad, ou autre appli qui bouge la souris)")
+            }
+            cursor.foreignMoves = 0
+            foreignMovesSince = Date()
+        }
         motionAuth = Permissions.motion
         let trusted = Permissions.axTrusted
         if trusted != axTrusted {
@@ -393,7 +466,7 @@ final class AppModel: ObservableObject {
                                  calibrating: calibSamples != nil,
                                  streaming: motion.isStreaming,
                                  sinceStart: motion.secondsSinceInitialStart,
-                                 paused: isPaused)
+                                 paused: isPaused || suspendedForAirDance)
         if new != status {
             if new != .active && new != .paused && cursor.dragging { toggleDrag(); Log.line("Glisser relâché (plus de mouvement)") }
             if status == .active && new == .noMotion { toast(String(localized: "AirPods : plus de mouvement"), "exclamationmark.triangle.fill") }
@@ -429,9 +502,11 @@ final class AppModel: ObservableObject {
 
     func startCalibration() {
         guard motion.isStreaming else { calibrationMessage = String(localized: "Les AirPods n'envoient aucun mouvement : mets-les dans tes oreilles."); return }
-        calibrationMessage = nil
+        calibrationMessage = String(localized: "Hoche la tête de haut en bas…")
+        calibrationProgress = 0
         calibSamples = []
         calibEnd = Date().addingTimeInterval(3)
+        toast(String(localized: "Hoche la tête de haut en bas…"), "arrow.up.and.down.circle.fill")
         NSSound(named: "Tink")?.play()
         healthCheck()
     }
@@ -440,21 +515,15 @@ final class AppModel: ObservableObject {
     private func finishCalibration() {
         guard let samples = calibSamples else { return }
         calibSamples = nil
+        calibrationProgress = 0
         defer { healthCheck() }
-        guard samples.count > 20 else { fail(String(localized: "Aucun mouvement reçu pendant le calibrage.")); return }
-        var cov = simd_double3x3(0)
-        var hs: [(V3, Double)] = []
-        for s in samples {
-            let h = s.w - simd_dot(s.w, s.g) * s.g
-            hs.append((h, s.dt))
-            cov += simd_double3x3(columns: (h * h.x, h * h.y, h * h.z))
+        guard let axis = CalibrationSolver.solvePitchAxis(samples: samples) else {
+            let s = samples.count <= 15
+                ? String(localized: "Aucun mouvement reçu pendant le calibrage.")
+                : String(localized: "Pas assez de mouvement : lève la tête plus franchement.")
+            calibrationMessage = s; NSSound(named: "Basso")?.play(); Log.line(s)
+            return
         }
-        var axis = V3(1, 1, 1)
-        for _ in 0..<50 { let n = cov * axis; if simd_length(n) < 1e-9 { break }; axis = simd_normalize(n) }
-        var theta = 0.0, extreme = 0.0       // signe : le premier grand mouvement doit être vers le haut
-        for (h, dt) in hs { theta += simd_dot(h, axis) * dt; if abs(theta) > abs(extreme) { extreme = theta } }
-        guard abs(extreme) > 0.15 else { fail(String(localized: "Pas assez de mouvement : lève la tête plus franchement.")); return }
-        if extreme < 0 { axis = -axis }
         engine.axis = axis
         engine.reset(); cursor.dropPending()
         defaults.set([axis.x, axis.y, axis.z], forKey: "vAxis")
@@ -463,12 +532,10 @@ final class AppModel: ObservableObject {
         toast(String(localized: "Calibré ✅"), "checkmark.circle.fill")
         NSSound(named: "Glass")?.play()
         Log.line("Calibré : \(axis)")
-
-        func fail(_ s: String) { calibrationMessage = s; NSSound(named: "Basso")?.play(); Log.line(s) }
     }
 
     func resetSettings() {
-        for k in ["sensitivity", "verticalRatio", "invertX", "invertY", "nodClick", "nodPreset", "tiltClick", "dwellEnabled", "dwellDelay", "vAxis", "alignment", "stemScroll", "scrollStep", "typingPause", "magnet", "magnetStrength", "dwellMenu", "shakeEscape", "autoVoiceOnTextClick", "voiceInputMode", "toasts"] {
+        for k in ["sensitivity", "verticalRatio", "invertX", "invertY", "nodClick", "nodPreset", "tiltClick", "dwellEnabled", "dwellDelay", "vAxis", "edgeMemory", "alignment", "stemScroll", "scrollStep", "typingPause", "magnet", "magnetStrength", "dwellMenu", "shakeEscape", "autoVoiceOnTextClick", "voiceInputMode", "toasts"] {
             defaults.removeObject(forKey: k)
         }
         loadSettings()
@@ -535,6 +602,10 @@ final class AppModel: ObservableObject {
             // Aimant refait (progressif, réglable, plus fort par défaut) : de nouveau activé
             defaults.removeObject(forKey: "magnet")
         }
+        if version < 6 {
+            // Dérive à vide du gyroscope corrigée + mémoire des 4 bords : alignement tête ↔ écran réactivé par défaut !
+            for k in ["alignment", "edgeMemory"] { defaults.removeObject(forKey: k) }
+        }
         if version < Self.settingsVersion { defaults.set(Self.settingsVersion, forKey: "settingsVersion") }
         func d(_ k: String, _ def: Double) -> Double { defaults.object(forKey: k) != nil ? defaults.double(forKey: k) : def }
         func b(_ k: String, _ def: Bool) -> Bool { defaults.object(forKey: k) != nil ? defaults.bool(forKey: k) : def }
@@ -545,7 +616,8 @@ final class AppModel: ObservableObject {
         nodClick = b("nodClick", true)
         nodPreset = NodPreset(rawValue: defaults.integer(forKey: "nodPreset")).flatMap { defaults.object(forKey: "nodPreset") != nil ? $0 : nil } ?? .normal
         tiltClick = b("tiltClick", false)
-        alignment = b("alignment", false)
+        edgeMemory = b("edgeMemory", true)
+        alignment = b("alignment", true)
         stemScroll = b("stemScroll", false)
         typingPause = b("typingPause", true)
         toasts = b("toasts", true)

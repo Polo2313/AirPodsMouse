@@ -3,6 +3,7 @@
 import Foundation
 import AirPodsMouseCore
 import CoreGraphics
+import simd
 
 var failures = 0
 func check(_ name: String, _ cond: Bool, _ detail: @autoclosure () -> String = "") {
@@ -289,8 +290,72 @@ check("searchClassifierRejectsClickFarFromFocusedSearchBar",
 check("searchClassifierRejectsLargeCodeEditor",
       !SearchBarClassifier.matches(role: "AXTextArea", subrole: "", hints: "Editor",
                                    rect: editorRect, clickedAt: CGPoint(x: 600, y: 400), isFocusedElement: true))
+check("searchClassifierRejectsPasswordField",
+      !SearchBarClassifier.matches(role: "AXTextField", subrole: "AXSecureTextField", hints: "Mot de passe",
+                                   rect: searchRect, clickedAt: CGPoint(x: 520, y: 95), isFocusedElement: true))
+check("searchClassifierAcceptsSpotlightPrompt",
+      SearchBarClassifier.matches(role: "AXGroup", subrole: "", hints: "Spotlight Recherche",
+                                  rect: CGRect(x: 420, y: 200, width: 620, height: 48),
+                                  clickedAt: CGPoint(x: 520, y: 224), isFocusedElement: false))
 check("searchClassifierRejectsButtons",
       SearchBarClassifier.isDirectNonInput(role: "AXButton", subrole: ""))
+
+// MARK: - Résilience Bluetooth HFP (paquets espacés de 0,22 s pendant l'écoute micro) & Calibrage haut/bas
+
+do {
+    var hfpEngine = PointerEngine()
+    let g = V3(0, 0, -1)
+    _ = hfpEngine.step(w: V3(0, 0, -0.4), g: g, dt: 0.02, t: 0.0)
+    let burstOut = hfpEngine.step(w: V3(0, 0, -0.4), g: g, dt: 0.22, t: 0.22)
+    check("hfpBurstDoesNotDropHeadMovement", abs(burstOut.dx) > 1.0, "dx=\(burstOut.dx)")
+
+    // Calibrage : commencer en baissant la tête (signe négatif) ne doit JAMAIS inverser l'axe haut/bas (+X)
+    let trueAxis = simd_normalize(V3(0.94, 0.34, 0))
+    var downFirstSamples: [(w: V3, g: V3, dt: Double)] = []
+    for i in 0..<100 {
+        let t = Double(i) * 0.03
+        // D'abord vers le bas (-0.6 rad/s), puis petit retour (+0.4 rad/s) : amplitude modérée (~7°)
+        let rate = -0.55 * sin(2 * .pi * 0.8 * t)
+        downFirstSamples.append((w: trueAxis * rate, g: g, dt: 0.03))
+    }
+    let solved = CalibrationSolver.solvePitchAxis(samples: downFirstSamples)
+    check("calibrationDownFirstDoesNotInvertAxis",
+          solved.map { simd_dot($0, trueAxis) > 0.98 } ?? false, "\(String(describing: solved))")
+
+    let stillSamples = (0..<60).map { _ in (w: V3(0.01, -0.01, 0), g: g, dt: 0.03) }
+    check("calibrationRejectsStillHead", CalibrationSolver.solvePitchAxis(samples: stillSamples) == nil)
+
+    // Mémoire des 4 bords (même si `alignment` est désactivé) : dépasser le bord haut ou droit puis revenir ne perd pas le fil
+    var edgeOnly = PointerEngine()
+    edgeOnly.alignment = false
+    edgeOnly.edgeMemory = true
+    var ep = center
+    var et = 0.0
+    // 1. Tourne fort à droite pendant 1,0 s (dépasse largement le bord droit x=1469), puis revient exactement du même angle
+    while et < 2.2 {
+        let rate = et < 1.0 ? -0.45 : (et < 1.2 ? 0.0 : 0.45)
+        let o = edgeOnly.step(w: V3(0, 0, rate), g: g, dt: 0.02, t: et, screen: ScreenContext(cursor: ep, bounds: screen))
+        ep = CGPoint(x: min(max(ep.x + o.dx, screen.minX), screen.maxX - 1),
+                     y: min(max(ep.y + o.dy, screen.minY), screen.maxY - 1))
+        et += 0.02
+    }
+    check("edgeMemoryHorizontalKeepsSync", ep.x > center.x - 120 && ep.x < screen.maxX - 100, "ep.x=\(Int(ep.x))")
+
+    // 2. Zéro dérive à vide avec biais gyroscope constant (+0,012 rad/s pendant 60 s d'immobilité)
+    var driftEngine = PointerEngine()
+    driftEngine.alignment = true
+    var dp = center
+    var dtClock = 0.0
+    while dtClock < 60.0 {
+        let o = driftEngine.step(w: V3(0, 0, 0.012), g: g, dt: 0.02, t: dtClock, screen: ScreenContext(cursor: dp, bounds: screen))
+        dp = CGPoint(x: min(max(dp.x + o.dx, screen.minX), screen.maxX - 1),
+                     y: min(max(dp.y + o.dy, screen.minY), screen.maxY - 1))
+        dtClock += 0.02
+    }
+    // Puis un mouvement rapide : l'alignement ne doit PAS tirer le curseur de 1 400 px à cause du biais accumulé !
+    let afterStill = driftEngine.step(w: V3(0, 0, -0.6), g: g, dt: 0.02, t: 60.02, screen: ScreenContext(cursor: dp, bounds: screen))
+    check("stationaryGyroBiasDoesNotPullCursor", abs(afterStill.dx) < 80, "dx=\(afterStill.dx)")
+}
 
 print(failures == 0 ? "\nTout est vert." : "\n\(failures) échec(s).")
 exit(failures == 0 ? 0 : 1)

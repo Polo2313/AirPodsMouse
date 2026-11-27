@@ -164,7 +164,11 @@ public struct PointerEngine {
     }
     public var tiltClick = false
     public var axis: V3?                    // axe haut/bas calibré (repère écouteur), sinon axe par défaut
-    /// Garde « en face de l'écran = curseur au centre » (mémoire des bords, réalignement, référence recalibrée).
+    /// Mémoire des 4 bords : quand le curseur touche un bord et que la tête continue de tourner au-delà,
+    /// il attend que la tête revienne réellement au bord avant de repartir dans l'autre sens.
+    public var edgeMemory = true
+    public var maxEdgeOvershoot = 460.0     // px (~16° hors écran max : évite de bloquer si on se tourne complètement)
+    /// Garde « en face de l'écran = curseur au centre » (réalignement, rattrapage vitesse rapide/lente, zéro dérive).
     public var alignment = true
     /// Alignement vertical désactivé : on ne bouge la tête que de ±6° pour couvrir l'écran en hauteur, mais bien plus
     /// pour regarder le clavier, et l'angle vertical dérive (+4° mesurés rien qu'en hochant la tête). Aligné, le curseur
@@ -180,6 +184,7 @@ public struct PointerEngine {
 
     // État
     private var yawAngle = 0.0, pitchAngle = 0.0
+    private var yawBias = 0.0, pitchBias = 0.0      // dérive à vide du gyroscope apprise quand la tête est immobile
     private var fYaw = OneEuroFilter(minCutoff: 0.8, beta: 6)
     private var fPitch = OneEuroFilter(minCutoff: 0.8, beta: 6)
     private var lastYaw: Double?, lastPitch: Double?
@@ -189,6 +194,7 @@ public struct PointerEngine {
     private var recent: [(t: Double, dx: Double, dy: Double)] = []   // derniers déplacements émis
     private var gestureStart: Double?
     private var refYaw: Double?, refPitch: Double?   // direction « en face » (correspond au centre de l'écran)
+    private var overshootX = 0.0, overshootY = 0.0   // dépassement virtuel (px) au-delà des bords de l'écran
 
     public static func defaultAxis(_ g: V3) -> V3 { abs(g.x) < 0.7 ? V3(1, 0, 0) : V3(0, 1, 0) }
 
@@ -213,10 +219,20 @@ public struct PointerEngine {
 
     public mutating func reset() {
         lastYaw = nil; lastPitch = nil; heldX = 0; heldY = 0
+        overshootX = 0; overshootY = 0
+    }
+
+    /// Appelé après un déplacement au vrai trackpad : adopte la nouvelle position du curseur sans tirer en arrière.
+    public mutating func reanchorAfterExternalMove() {
+        reset()
+        refYaw = nil; refPitch = nil
     }
 
     /// Remet la référence « en face » sur la direction actuelle de la tête ; l'appelant place le curseur au centre.
-    public mutating func recenter() { refYaw = lastYaw; refPitch = lastPitch }
+    public mutating func recenter() {
+        refYaw = lastYaw; refPitch = lastPitch
+        overshootX = 0; overshootY = 0
+    }
 
     /// Direction filtrée de la tête (rad) : lacet (+ = gauche), tangage (+ = haut). Nil avant la première mesure.
     public var headAngles: (yaw: Double, pitch: Double)? {
@@ -283,14 +299,73 @@ public struct PointerEngine {
         }
     }
 
+    /// Absorbe le dépassement de la tête au-delà des 4 bords de l'écran (fonctionne même sans `alignment`).
+    private mutating func applyEdgeMemory(dx: inout Double, dy: inout Double, dt: Double, screen sc: ScreenContext) {
+        let b = sc.bounds, c = sc.cursor
+        let cap = maxEdgeOvershoot * sensitivity
+
+        // Axe horizontal (bords gauche et droit)
+        let nextX = c.x + dx
+        if overshootX < 0 {
+            overshootX = max(-cap, overshootX + dx)
+            if overshootX > 0 { dx = overshootX; overshootX = 0 } else { dx = 0 }
+        } else if overshootX > 0 {
+            overshootX = min(cap, overshootX + dx)
+            if overshootX < 0 { dx = overshootX; overshootX = 0 } else { dx = 0 }
+        } else if nextX < b.minX {
+            overshootX = max(-cap, nextX - b.minX)
+            dx = b.minX - c.x
+        } else if nextX > b.maxX - 1 {
+            overshootX = min(cap, nextX - (b.maxX - 1))
+            dx = (b.maxX - 1) - c.x
+        }
+
+        // Axe vertical (bords haut et bas)
+        let nextY = c.y + dy
+        if overshootY < 0 {
+            overshootY = max(-cap, overshootY + dy)
+            if overshootY > 0 { dy = overshootY; overshootY = 0 } else { dy = 0 }
+        } else if overshootY > 0 {
+            overshootY = min(cap, overshootY + dy)
+            if overshootY < 0 { dy = overshootY; overshootY = 0 } else { dy = 0 }
+        } else if nextY < b.minY {
+            overshootY = max(-cap, nextY - b.minY)
+            dy = b.minY - c.y
+        } else if nextY > b.maxY - 1 {
+            overshootY = min(cap, nextY - (b.maxY - 1))
+            dy = (b.maxY - 1) - c.y
+        }
+
+        // Si la tête reste immobile longtemps hors de l'écran, résorbe doucement le dépassement (τ ≈ 8 s)
+        if abs(dx) < 0.05 && abs(dy) < 0.05 {
+            let decay = max(0, 1 - dt / 8.0)
+            overshootX *= decay
+            overshootY *= decay
+        }
+    }
+
     public mutating func step(w: V3, g: V3, dt rawDt: Double, t: Double, screen: ScreenContext? = nil) -> PointerOutput {
         var out = PointerOutput()
-        let gap = rawDt > 0.15
+        // En mode micro Bluetooth (HFP 24 kHz, ex. pendant que Librewispr écoute), les paquets arrivent
+        // par salves espacées de ~0,16–0,24 s : on tolère jusqu'à 0,35 s sans jeter le mouvement.
+        let gap = rawDt > 0.35
         let dt = min(max(rawDt, 0.001), 0.1)
-        let r = rates(w: w, g: g)
+        let rawR = rates(w: w, g: g)
 
-        yawAngle += r.yaw * dt
-        pitchAngle += r.pitch * dt
+        // Apprend et soustrait la dérive à vide du gyroscope quand la tête est au repos (< ~2°/s) :
+        // élimine la dérive de ~1 400 px/min qui faussait l'alignement tête ↔ écran.
+        let rawSpeed = hypot(rawR.yaw, rawR.pitch)
+        if rawSpeed < 0.032 {
+            let a = min(dt / 2.0, 0.15)
+            yawBias = min(max(yawBias + (rawR.yaw - yawBias) * a, -0.025), 0.025)
+            pitchBias = min(max(pitchBias + (rawR.pitch - pitchBias) * a, -0.025), 0.025)
+        }
+        let r = (yaw: rawR.yaw - yawBias, pitch: rawR.pitch - pitchBias, roll: rawR.roll)
+
+        // N'intègre pas le bruit sous le seuil d'immobilité : l'angle de référence ne dérive plus jamais à l'arrêt !
+        let quietGate = smoothstep(noiseFloor * 0.5, noiseFloor * 1.4, hypot(r.yaw, r.pitch))
+        yawAngle += r.yaw * quietGate * dt
+        pitchAngle += r.pitch * quietGate * dt
         if gap { fYaw.reset(to: yawAngle); fPitch.reset(to: pitchAngle); lastYaw = nil }
         let fy = fYaw.filter(yawAngle, dt: dt)
         let fp = fPitch.filter(pitchAngle, dt: dt)
@@ -315,9 +390,9 @@ public struct PointerEngine {
             case .none: break
             }
         }
-        if nodClick { apply(nod.update(r.pitch, other: max(abs(r.yaw), abs(r.roll)), t: t, dt: dt), .left) }
+        if nodClick { apply(nod.update(rawR.pitch, other: max(abs(rawR.yaw), abs(rawR.roll)), t: t, dt: dt), .left) }
         if tiltClick && out.click == nil && nod.start == nil {
-            apply(tilt.update(r.roll, other: max(abs(r.yaw), abs(r.pitch)), t: t, dt: dt), .right)
+            apply(tilt.update(rawR.roll, other: max(abs(rawR.yaw), abs(rawR.pitch)), t: t, dt: dt), .right)
         }
         recent.removeAll { t - $0.t > 1.0 }
         if holding { if gestureStart == nil { gestureStart = t } } else if out.click == nil { gestureStart = nil }
@@ -330,7 +405,21 @@ public struct PointerEngine {
         }
         if discard { heldX = 0; heldY = 0; return out }
         if holding { heldX += dx; heldY += dy; return out }
-        if alignment, let sc = screen { align(dx: &dx, dy: &dy, yaw: fy, pitch: fp, speed: speed, dt: dt, screen: sc) }
+        if alignment, let sc = screen {
+            align(dx: &dx, dy: &dy, yaw: fy, pitch: fp, speed: speed, dt: dt, screen: sc)
+        }
+        if edgeMemory, let sc = screen {
+            // Si `alignment` gère déjà l'horizontal, `applyEdgeMemory` complète le vertical ; sinon il gère les 4 bords.
+            if alignment {
+                var zeroX = 0.0
+                applyEdgeMemory(dx: &zeroX, dy: &dy, dt: dt, screen: sc)
+                overshootX = 0
+            } else {
+                applyEdgeMemory(dx: &dx, dy: &dy, dt: dt, screen: sc)
+            }
+        } else {
+            overshootX = 0; overshootY = 0
+        }
         out.dx = dx; out.dy = dy
         recent.append((t, dx, dy))
         return out

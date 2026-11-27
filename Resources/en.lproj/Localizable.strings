@@ -200,3 +200,11 @@
 "Fin du défilement" = "Scrolling off";
 "Échap" = "Escape";
 "Lâché" = "Released";
+"Parle — reclique dans la barre pour arrêter" = "Speak — click the bar again to stop";
+"Écoute arrêtée" = "Listening stopped";
+"Hoche la tête de haut en bas…" = "Nod your head up and down…";
+"Arrêter l'écoute" = "Stop listening";
+"Dicter avec la voix" = "Voice dictation";
+"Mémoire des bords (garder le fil hors de l'écran)" = "Edge memory (keep sync past screen borders)";
+"Quand la souris touche un bord et que tu continues de tourner la tête, elle attend que ta tête revienne au bord avant de repartir. Regarder en face de l'écran ramène toujours le curseur au centre (⌃⌥C pour recentrer tout de suite)." = "When the pointer touches an edge and you keep turning your head, it waits until your head returns to the edge before moving back. Looking straight at the screen always brings the pointer back to the center (⌃⌥C to recenter right away).";
+"Mémoire des bords & alignement" = "Edge memory & alignment";

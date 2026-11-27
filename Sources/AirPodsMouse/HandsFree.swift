@@ -270,6 +270,14 @@ enum HandsFree {
         return true
     }
 
+    /// Arrête l'écoute en renvoyant le raccourci de Librewispr, seulement s'il tourne (sinon on le lancerait).
+    @discardableResult
+    static func stopLibrewispr() -> Bool {
+        guard !NSRunningApplication.runningApplications(withBundleIdentifier: librewisprBundleID).isEmpty else { return false }
+        postShortcut(currentLibrewisprShortcut())
+        return true
+    }
+
     /// Ouvre ou affiche la fenêtre de Librewispr.
     @discardableResult
     static func openLibrewisprApp() -> Bool {

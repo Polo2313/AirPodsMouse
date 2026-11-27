@@ -5,14 +5,24 @@ import CoreGraphics
 /// Déplace le curseur et clique, en envoyant de vrais événements souris (autorisation Accessibilité requise).
 @MainActor
 final class CursorController {
+    /// Signature unique posée sur chaque événement `CGEvent` émis par AirPodsMouse (`"APMS20"`),
+    /// pour distinguer à 100 % nos propres déplacements de ceux du vrai trackpad/souris physique sans faux positifs.
+    nonisolated static let eventTag: Int64 = 0x4150_4D53_3230
+    nonisolated static let myPID = Int64(ProcessInfo.processInfo.processIdentifier)
+
     private let source = CGEventSource(stateID: .hidSystemState)
     private(set) var pos = CGPoint.zero
     /// Faux tant que l'Accessibilité n'est pas accordée (mis à jour chaque seconde par AppModel).
     var allowed = false
     private var pending = CGPoint.zero          // reçu des capteurs, pas encore appliqué
-    private var recentPosted: [CGPoint] = []    // derniers points envoyés, pour reconnaître le vrai trackpad
+    private var lastPosted = CGPoint(x: -9999, y: -9999)
     private var screens: [CGRect] = []
     private var lastRealMouseAt: TimeInterval = -10
+    private var wasRealMouseActive = false
+    private var globalMouseMonitor: Any?
+    private var localMouseMonitor: Any?
+    /// Nombre de fois où le curseur a été déplacé par autre chose que nous (diagnostic, remis à zéro par l'appelant).
+    var foreignMoves = 0
 
     private var lastClick = Date.distantPast
     private var lastClickRight = false
@@ -22,12 +32,46 @@ final class CursorController {
     init() {
         pos = CGEvent(source: nil)?.location ?? .zero
         _ = refreshScreens()
+        let mask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged]
+        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] e in
+            Self.handleMonitorEvent(e, controller: self)
+        }
+        // Indispensable quand la fenêtre de réglages d'AirPodsMouse est au premier plan !
+        localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: mask) { [weak self] e in
+            Self.handleMonitorEvent(e, controller: self)
+            return e
+        }
+    }
+
+    nonisolated private static func handleMonitorEvent(_ e: NSEvent, controller: CursorController?) {
+        guard let cg = e.cgEvent else { return }
+        if cg.getIntegerValueField(.eventSourceUserData) == Self.eventTag { return }
+        if cg.getIntegerValueField(.eventSourceUnixProcessID) == Self.myPID { return }
+        let loc = cg.location
+        let t = ProcessInfo.processInfo.systemUptime
+        MainActor.assumeIsolated {
+            guard let controller else { return }
+            guard hypot(loc.x - controller.pos.x, loc.y - controller.pos.y) > 1.5 else { return }
+            controller.pos = loc
+            controller.lastPosted = loc
+            controller.pending = .zero
+            controller.lastRealMouseAt = t
+            controller.wasRealMouseActive = true
+            controller.foreignMoves += 1
+        }
     }
 
     /// Vrai pendant que l'utilisateur déplace la vraie souris ou le trackpad (et 0,35 s après),
-    /// pour laisser la main au trackpad sans que la tête lutte contre lui.
+    /// pour laisser la main au trackpad sans figer la tête longtemps après l'arrêt.
     var isRealMouseActive: Bool {
         ProcessInfo.processInfo.systemUptime - lastRealMouseAt < 0.35
+    }
+
+    /// Vrai une seule fois au moment où la main repasse du trackpad à la tête (reprise sans saut).
+    func consumeRealMouseResume() -> Bool {
+        guard wasRealMouseActive, !isRealMouseActive else { return false }
+        wasRealMouseActive = false
+        return true
     }
 
     /// Aimant : > 0 quand le curseur survole un élément cliquable (part de vitesse retirée en visée fine).
@@ -46,7 +90,9 @@ final class CursorController {
         guard allowed, !dragging else { return }
         flush()
         let p = CGPoint(x: pos.x.rounded(), y: pos.y.rounded())
-        CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap)
+        let e = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: p, mouseButton: .left)
+        e?.setIntegerValueField(.eventSourceUserData, value: Self.eventTag)
+        e?.post(tap: .cghidEventTap)
         dragging = true
     }
 
@@ -54,7 +100,9 @@ final class CursorController {
         guard dragging else { return }
         flush()
         let p = CGPoint(x: pos.x.rounded(), y: pos.y.rounded())
-        CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap)
+        let e = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: p, mouseButton: .left)
+        e?.setIntegerValueField(.eventSourceUserData, value: Self.eventTag)
+        e?.post(tap: .cghidEventTap)
         dragging = false
     }
 
@@ -65,7 +113,9 @@ final class CursorController {
     func pressEscape() {
         guard allowed else { return }
         for down in [true, false] {
-            CGEvent(keyboardEventSource: source, virtualKey: 53, keyDown: down)?.post(tap: .cghidEventTap)
+            let e = CGEvent(keyboardEventSource: source, virtualKey: 53, keyDown: down)
+            e?.setIntegerValueField(.eventSourceUserData, value: Self.eventTag)
+            e?.post(tap: .cghidEventTap)
         }
     }
 
@@ -82,8 +132,9 @@ final class CursorController {
         var step = (pendingScroll * 0.2).rounded()
         if abs(step) < 1 { step = pendingScroll > 0 ? 1 : -1 }
         pendingScroll -= step
-        CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 1, wheel1: Int32(step), wheel2: 0, wheel3: 0)?
-            .post(tap: .cghidEventTap)
+        let e = CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 1, wheel1: Int32(step), wheel2: 0, wheel3: 0)
+        e?.setIntegerValueField(.eventSourceUserData, value: Self.eventTag)
+        e?.post(tap: .cghidEventTap)
     }
 
     func dropPending() { pending = .zero }
@@ -95,10 +146,10 @@ final class CursorController {
     /// par paquets irréguliers ; sans ça, le curseur avance par à-coups.
     /// - Parameter sensorsFresh: false si la dernière mesure date de plus de 0,3 s (AirPods retirés…) :
     ///   on jette le reste pour que le curseur s'arrête net.
-    /// - Returns: true si le vrai trackpad/souris a bougé le curseur depuis le dernier appel.
+    /// - Returns: true si le vrai trackpad/souris a bougé le curseur récemment.
     @discardableResult
     func tick(sensorsFresh: Bool) -> Bool {
-        let real = syncWithRealMouse() || isRealMouseActive
+        let real = isRealMouseActive
         guard sensorsFresh, !real else { pending = .zero; return real }
         guard pending != .zero else { return false }
         var step = CGPoint(x: pending.x * 0.35, y: pending.y * 0.35)
@@ -108,33 +159,26 @@ final class CursorController {
         return false
     }
 
-    /// Si le curseur n'est sur aucun des derniers points envoyés, c'est le vrai trackpad qui l'a bougé : on repart de là.
-    /// (Comparer au seul dernier point ramenait le curseur en arrière quand il allait vite : la position lue
-    /// a parfois un événement de retard.)
-    @discardableResult
-    func syncWithRealMouse() -> Bool {
-        guard let cur = CGEvent(source: nil)?.location else { return false }
-        let ours = recentPosted.contains { abs($0.x - cur.x) <= 2 && abs($0.y - cur.y) <= 2 }
-        let movedAway = abs(cur.x - pos.x) > 2 || abs(cur.y - pos.y) > 2
-        if !ours && movedAway {
-            pos = cur
-            pending = .zero
-            recentPosted = [cur]
-            lastRealMouseAt = ProcessInfo.processInfo.systemUptime
-            return true
-        }
-        return false
+    /// Vrai si le curseur est collé contre un bord extérieur de l'écran (ex. tête tournée hors de l'écran).
+    var isPinnedAtScreenEdge: Bool {
+        let b = screenContext.bounds
+        return pos.x <= b.minX + 1.5 || pos.x >= b.maxX - 2.5 || pos.y >= b.maxY - 2.5
     }
 
     private func move(by d: CGPoint) {
         guard d != .zero, allowed else { return }
-        pos = clampToScreens(CGPoint(x: pos.x + d.x, y: pos.y + d.y), from: pos)
+        let old = pos
+        pos = clampToScreens(CGPoint(x: pos.x + d.x, y: pos.y + d.y), from: old)
         let p = CGPoint(x: pos.x.rounded(), y: pos.y.rounded())
-        guard p != recentPosted.last else { return }
-        CGEvent(mouseEventSource: source, mouseType: dragging ? .leftMouseDragged : .mouseMoved,
-                mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap)
-        recentPosted.append(p)
-        if recentPosted.count > 6 { recentPosted.removeFirst() }
+        guard p != lastPosted else { return }
+        let prev = lastPosted.x < -9000 ? old : lastPosted
+        let e = CGEvent(mouseEventSource: source, mouseType: dragging ? .leftMouseDragged : .mouseMoved,
+                        mouseCursorPosition: p, mouseButton: .left)
+        e?.setIntegerValueField(.eventSourceUserData, value: Self.eventTag)
+        e?.setDoubleValueField(.mouseEventDeltaX, value: Double(p.x - prev.x))
+        e?.setDoubleValueField(.mouseEventDeltaY, value: Double(p.y - prev.y))
+        e?.post(tap: .cghidEventTap)
+        lastPosted = p
     }
 
     /// Clique là où se trouve le curseur. Deux clics rapprochés au même endroit = double-clic.
@@ -142,7 +186,7 @@ final class CursorController {
         guard allowed else { return }
         let now = Date()
         guard now.timeIntervalSince(lastClick) > 0.3 else { return }
-        syncWithRealMouse()
+        if isRealMouseActive, let cur = CGEvent(source: nil)?.location { pos = cur }
         let p = CGPoint(x: pos.x.rounded(), y: pos.y.rounded())
         let near = hypot(p.x - lastClickPos.x, p.y - lastClickPos.y) < 6
         let window = max(NSEvent.doubleClickInterval, 0.9)
@@ -153,6 +197,7 @@ final class CursorController {
             right ? (.rightMouseDown, .rightMouseUp, .right) : (.leftMouseDown, .leftMouseUp, .left)
         for type in [down, up] {
             let e = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: p, mouseButton: button)
+            e?.setIntegerValueField(.eventSourceUserData, value: Self.eventTag)
             e?.setIntegerValueField(.mouseEventClickState, value: Int64(clickCount))
             e?.post(tap: .cghidEventTap)
         }
@@ -166,6 +211,7 @@ final class CursorController {
         for state: Int64 in [1, 2] {
             for type: CGEventType in [.leftMouseDown, .leftMouseUp] {
                 let e = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: p, mouseButton: .left)
+                e?.setIntegerValueField(.eventSourceUserData, value: Self.eventTag)
                 e?.setIntegerValueField(.mouseEventClickState, value: state)
                 e?.post(tap: .cghidEventTap)
             }

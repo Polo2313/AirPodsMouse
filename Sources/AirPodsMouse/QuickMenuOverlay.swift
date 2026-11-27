@@ -23,7 +23,8 @@ final class QuickMenuOverlay {
 
     /// - Parameter origin: centre du menu en coordonnées écran (origine en haut à gauche).
     func show(at origin: CGPoint) {
-        let mainHeight = NSScreen.screens.first?.frame.height ?? 0
+        let primary = NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.screens.first
+        let mainHeight = primary?.frame.height ?? 0
         panel.setFrameOrigin(NSPoint(x: origin.x - Self.size / 2, y: mainHeight - origin.y - Self.size / 2))
         panel.orderFrontRegardless()
     }

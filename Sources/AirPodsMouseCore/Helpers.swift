@@ -1,5 +1,58 @@
 import CoreGraphics
 import Foundation
+import simd
+
+// MARK: - Calibrage de l'axe haut / bas
+
+/// Extrait l'axe de tangage (haut/bas) à partir de 3 secondes de hochements de tête (« oui »).
+/// Robuste aux petits mouvements naturels (≥ ~5,2° crête-à-crête) et insensible au fait que l'utilisateur
+/// commence par baisser ou lever la tête (aligne le signe sur l'axe anatomique par défaut de l'écouteur).
+public enum CalibrationSolver {
+    public static func solvePitchAxis(samples: [(w: V3, g: V3, dt: Double)]) -> V3? {
+        guard samples.count > 15 else { return nil }
+        var cov = simd_double3x3(0)
+        var hs: [(V3, Double)] = []
+        hs.reserveCapacity(samples.count)
+        var gSum = V3.zero
+        for s in samples {
+            let h = s.w - simd_dot(s.w, s.g) * s.g
+            hs.append((h, s.dt))
+            cov += simd_double3x3(columns: (h * h.x, h * h.y, h * h.z))
+            gSum += s.g
+        }
+        var axis = V3(1, 1, 1)
+        for _ in 0..<50 {
+            let n = cov * axis
+            if simd_length(n) < 1e-9 { return nil }
+            axis = simd_normalize(n)
+        }
+        var theta = 0.0, minTheta = 0.0, maxTheta = 0.0, extreme = 0.0
+        for (h, dt) in hs {
+            theta += simd_dot(h, axis) * dt
+            minTheta = min(minTheta, theta)
+            maxTheta = max(maxTheta, theta)
+            if abs(theta) > abs(extreme) { extreme = theta }
+        }
+        let span = maxTheta - minTheta
+        guard span >= 0.09 else { return nil } // ~5,2° crête-à-crête minimum
+
+        // Oriente le signe de l'axe (+ = lever la tête) selon le repère écouteur d'Apple,
+        // pour qu'un hochement vers le bas en premier n'inverse jamais le haut et le bas.
+        let gMean = simd_length(gSum) > 1e-6 ? simd_normalize(gSum) : V3(0, 0, -1)
+        var defSide = PointerEngine.defaultAxis(gMean)
+        defSide -= simd_dot(defSide, gMean) * gMean
+        if simd_length(defSide) > 0.2 {
+            defSide = simd_normalize(defSide)
+            let d = simd_dot(axis, defSide)
+            if abs(d) > 0.25 {
+                if d < 0 { axis = -axis }
+                return axis
+            }
+        }
+        if extreme < 0 { axis = -axis }
+        return axis
+    }
+}
 
 // MARK: - Pause pendant la frappe
 
@@ -149,6 +202,7 @@ public enum SearchBarClassifier {
     private static let searchKeywords: [String] = [
         "recherch", "search", "chercher", "trouver", "find", "adresse", "address",
         "url", "google", "query", "filter", "filtrer", "ask", "demander", "question", "prompt",
+        "spotlight", "raycast", "message", "écrire", "write", "chat", "commande", "command",
     ]
 
     public static func isDirectNonInput(role: String, subrole: String) -> Bool {
@@ -157,6 +211,8 @@ public enum SearchBarClassifier {
 
     public static func matches(role: String, subrole: String, hints: String, rect: CGRect,
                                clickedAt p: CGPoint, isFocusedElement: Bool) -> Bool {
+        // Jamais de saisie vocale dans un champ de mot de passe
+        if subrole == "AXSecureTextField" || role == "AXSecureTextField" { return false }
         // Une barre de recherche ou de saisie fait entre 12 et 92 px de haut (jamais 400 px comme un éditeur de code)
         guard rect.height >= 12, rect.height <= 92, rect.width >= 40 else { return false }
         // Tolérance horizontale plus large pour l'élément focalisé (clic sur la loupe ou la marge interne de la barre)
