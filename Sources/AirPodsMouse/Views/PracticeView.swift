@@ -30,8 +30,10 @@ struct PracticeView: View {
                             .contentShape(Circle())
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel(Text("Essai"))
                         .onHover { hovering = $0 }
-                        .position(x: 60 + target.x * (geo.size.width - 120), y: 60 + target.y * (geo.size.height - 120))
+                        .position(x: 60 + target.x * max(geo.size.width - 120, 0),
+                                  y: 60 + target.y * max(geo.size.height - 120, 0))
                         .transition(.scale.combined(with: .opacity))
                         .id(hits)
                     } else {
@@ -53,6 +55,7 @@ struct PracticeView: View {
                 }
             }
             .font(.title3)
+            .accessibilityHidden(true)
         }
         .padding(compact ? 0 : 24)
         .animation(.spring(duration: 0.35), value: hits)
@@ -62,7 +65,18 @@ struct PracticeView: View {
         NSSound(named: "Pop")?.play()
         hovering = false
         hits += 1
-        target = CGPoint(x: .random(in: 0...1), y: .random(in: 0...1))
+        target = Self.nextTarget(awayFrom: target)
+    }
+
+    /// Éloigne suffisamment la cible suivante pour réarmer le clic automatique (≥ 40 px même en vue compacte).
+    private static func nextTarget(awayFrom previous: CGPoint) -> CGPoint {
+        for _ in 0..<16 {
+            let candidate = CGPoint(x: .random(in: 0...1), y: .random(in: 0...1))
+            if hypot((candidate.x - previous.x) * 400, (candidate.y - previous.y) * 150) >= 110 {
+                return candidate
+            }
+        }
+        return CGPoint(x: previous.x < 0.5 ? 0.85 : 0.15, y: previous.y < 0.5 ? 0.8 : 0.2)
     }
 
     private func restart() { pop = false; hits = 0; target = CGPoint(x: 0.5, y: 0.5) }

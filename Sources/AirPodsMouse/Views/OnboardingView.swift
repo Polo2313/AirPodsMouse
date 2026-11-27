@@ -5,6 +5,7 @@ struct OnboardingView: View {
     enum Step: Int, CaseIterable { case welcome, motion, airpods, accessibility, click, practice }
 
     @EnvironmentObject var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var step: Step = .welcome
     @State private var forward = true
 
@@ -22,8 +23,9 @@ struct OnboardingView: View {
                     }
                 }
                 .id(step)
-                .transition(.asymmetric(insertion: .move(edge: forward ? .trailing : .leading).combined(with: .opacity),
-                                        removal: .move(edge: forward ? .leading : .trailing).combined(with: .opacity)))
+                .transition(reduceMotion ? .opacity : .asymmetric(
+                    insertion: .move(edge: forward ? .trailing : .leading).combined(with: .opacity),
+                    removal: .move(edge: forward ? .leading : .trailing).combined(with: .opacity)))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(.horizontal, 48)
@@ -44,7 +46,7 @@ struct OnboardingView: View {
     private var footer: some View {
         HStack {
             if step != .welcome {
-                Button("Retour") { go(Step(rawValue: step.rawValue - 1)!) }
+                Button("Retour") { if let prev = Step(rawValue: step.rawValue - 1) { go(prev) } }
                     .buttonStyle(.borderless)
             }
             Spacer()
@@ -55,6 +57,7 @@ struct OnboardingView: View {
                         .frame(width: 7, height: 7)
                 }
             }
+            .accessibilityHidden(true)
             Spacer()
             nextButton
         }
@@ -76,13 +79,15 @@ struct OnboardingView: View {
             Button("Continuer") { go(.click) }.buttonStyle(.borderedProminent).controlSize(.large)
                 .disabled(!model.axTrusted)
         default:
-            Button("Continuer") { go(Step(rawValue: step.rawValue + 1)!) }.buttonStyle(.borderedProminent).controlSize(.large)
+            Button("Continuer") { if let next = Step(rawValue: step.rawValue + 1) { go(next) } }
+                .buttonStyle(.borderedProminent).controlSize(.large)
         }
     }
 
     private func go(_ s: Step) {
+        guard s != step else { return }
         forward = s.rawValue > step.rawValue
-        withAnimation(.spring(duration: 0.45)) { step = s }
+        if reduceMotion { step = s } else { withAnimation(.spring(duration: 0.45)) { step = s } }
     }
 
     private func finish() {
@@ -129,6 +134,7 @@ struct DoneBadge: View {
 // MARK: - Étapes
 
 struct WelcomeStep: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var tilt = false
     var body: some View {
         VStack(spacing: 22) {
@@ -137,14 +143,18 @@ struct WelcomeStep: View {
                 Image(systemName: "airpodspro")
                     .font(.system(size: 92, weight: .light))
                     .foregroundStyle(LinearGradient(colors: [.blue, .indigo], startPoint: .topLeading, endPoint: .bottomTrailing))
-                    .rotationEffect(.degrees(tilt ? -8 : 8))
+                    .rotationEffect(.degrees(reduceMotion ? 0 : (tilt ? -8 : 8)))
                 Image(systemName: "cursorarrow")
                     .font(.system(size: 34, weight: .semibold))
                     .foregroundStyle(.primary)
                     .offset(x: 18, y: 8)
             }
             .frame(height: 130)
-            .onAppear { withAnimation(.easeInOut(duration: 1.6).repeatForever()) { tilt = true } }
+            .accessibilityHidden(true)
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(.easeInOut(duration: 1.6).repeatForever()) { tilt = true }
+            }
             Text("Pilote ton Mac avec ta tête").font(.system(size: 30, weight: .bold))
             Text("Tes AirPods deviennent une souris : tourne la tête pour déplacer le curseur, fais un petit « oui » pour cliquer.")
                 .font(.title3).foregroundStyle(.secondary).multilineTextAlignment(.center)
@@ -242,6 +252,7 @@ struct HeadIndicator: View {
 
 struct AccessibilityStep: View {
     @EnvironmentObject var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var toggleOn = false
     var body: some View {
         VStack(spacing: 22) {
@@ -265,7 +276,11 @@ struct AccessibilityStep: View {
                     Image(systemName: "hand.point.up.left.fill").font(.title2).foregroundStyle(.secondary)
                         .offset(x: 18, y: 18).opacity(toggleOn ? 0 : 1)
                 }
-                .onAppear { withAnimation(.easeInOut(duration: 1).delay(0.6).repeatForever()) { toggleOn = true } }
+                .accessibilityHidden(true)
+                .onAppear {
+                    if reduceMotion { toggleOn = true }
+                    else { withAnimation(.easeInOut(duration: 1).delay(0.6).repeatForever()) { toggleOn = true } }
+                }
 
                 Button {
                     Permissions.promptAccessibility()
@@ -338,6 +353,7 @@ struct ChoiceCard: View {
             .contentShape(RoundedRectangle(cornerRadius: 16))
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
         .animation(.spring(duration: 0.3), value: selected)
     }
 }
